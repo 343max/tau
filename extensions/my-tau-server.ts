@@ -1418,7 +1418,6 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     stream.destroy();
 
     if (!header?.id) return null;
-    if (userMessageCount <= 1 && lineCount <= 8) return null; // pipe mode
 
     return {
       id: header.id,
