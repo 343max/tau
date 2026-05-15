@@ -17,7 +17,7 @@ The original design spec (preserved in `.pi/AGENTS.md`, now merged here) imagine
 
 | File                          | Role                                                                                        |
 | ----------------------------- | ------------------------------------------------------------------------------------------- |
-| `extensions/mirror-server.ts` | Backend — WebSocket + HTTP server, API endpoints, static file serving                       |
+| `extensions/my-tau-server.ts` | Backend — WebSocket + HTTP server, API endpoints, static file serving                       |
 | `public/app.js`               | Main frontend controller                                                                    |
 | `public/session-sidebar.js`   | Sidebar UI — project/session list, search, favorites, context menu (`SessionSidebar` class) |
 | `public/style.css`            | All styles (~6,000+ lines), single file                                                     |
@@ -28,7 +28,7 @@ The original design spec (preserved in `.pi/AGENTS.md`, now merged here) imagine
 
 For changes spanning API → frontend rendering → styling, the three files to touch are:
 
-1. `extensions/mirror-server.ts` — add/modify API response fields
+1. `extensions/my-tau-server.ts` — add/modify API response fields
 2. `public/session-sidebar.js` — update rendering logic
 3. `public/style.css` — add/modify styles
 
