@@ -382,9 +382,7 @@ export class SessionSidebar {
     const isFirstRender = this.collapsedProjects.size === 0 && !this._hasAppliedInitialState;
     if (isFirstRender && this.instances.length > 0) {
       const activeCwds = new Set(this.instances.map((i) => i.cwd).filter(Boolean));
-      console.log("activeCwds", activeCwds);
       for (const project of this.projects) {
-        console.log("project", project.path, activeCwds.has(project.path));
         if (!activeCwds.has(project.path)) {
           this.collapsedProjects.add(project.dirName);
         }
