@@ -388,11 +388,15 @@ export class SessionSidebar {
       header.className = `project-header${isCollapsed ? ' collapsed' : ''}`;
 
       const pathParts = project.path.split('/').filter(Boolean);
-      const shortPath = pathParts.length > 0 ? pathParts[pathParts.length - 1] : project.path;
+      const dirName = pathParts.length > 0 ? pathParts[pathParts.length - 1] : project.path;
+      const displayPath = project.displayPath || project.path;
 
       header.innerHTML = `
         <span class="chevron">▼</span>
-        <span title="${this.escapeHtml(project.path)}">${this.escapeHtml(shortPath)}</span>
+        <div class="project-info">
+          <span class="project-name" title="${this.escapeHtml(project.path)}">${this.escapeHtml(dirName)}</span>
+          <span class="project-path">${this.escapeHtml(displayPath)}</span>
+        </div>
         <span class="project-count">${project.sessions.length}</span>
       `;
 

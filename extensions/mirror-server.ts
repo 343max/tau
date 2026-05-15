@@ -1173,7 +1173,11 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
         sessions.sort((a, b) => b.mtime - a.mtime);
 
         if (sessions.length > 0) {
-          projects.push({ path: decodedPath, dirName: dir.name, sessions });
+          const HOME = process.env.HOME || "";
+          const displayPath = HOME && decodedPath.startsWith(HOME + "/")
+            ? "~" + decodedPath.slice(HOME.length)
+            : decodedPath;
+          projects.push({ path: decodedPath, displayPath, dirName: dir.name, sessions });
         }
       }
 
