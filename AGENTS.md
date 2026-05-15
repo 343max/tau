@@ -1,23 +1,33 @@
 # AGENTS.md
 
+## Learnings
+
+- **Naming**: Project was renamed from "tau" to "my-tau". Legacy naming intentionally persists in localStorage keys (`tau-file-sidebar`, `tau-favourites`, `tau-theme`, `tau-show-thinking`), icon filenames (`tau-*.png`), and CSS classes (`.tau-icon`, `.tau-icon-welcome`). New code should use `my-tau` but don't refactor old keys without a migration plan.
+- **Status bar shortcut**: Pi TUI status bar uses `µτ` (U+00B5 Micro Sign + ASCII `t`) as the shortcut for my-tau, set via `ctx.ui.setStatus("µτ", ...)` in the extension.
+
+## History
+
+The original design spec (preserved in `.pi/AGENTS.md`, now merged here) imagined spawning `pi --mode rpc --no-session` as a subprocess with JSON-RPC over stdin/stdout. The actual implementation diverged: my-tau is a Pi extension that runs inside the Pi process, subscribing to events and forwarding them over WebSocket. No subprocess, no RPC mode.
+
 ## Project Overview
 
 **tau** is a web mirror for Pi (pi-coding-agent) — a browser-based interface that mirrors Pi terminal sessions in real-time, with session management, favorites, and full-text search.
 
 ## Key Files
 
-| File | Role |
-|------|------|
-| `extensions/mirror-server.ts` | Backend — WebSocket + HTTP server, API endpoints, static file serving |
-| `public/app.js` | Main frontend controller |
-| `public/session-sidebar.js` | Sidebar UI — project/session list, search, favorites, context menu (`SessionSidebar` class) |
-| `public/style.css` | All styles (~6,000+ lines), single file |
-| `public/state.js` | Centralized state management |
-| `public/websocket-client.js` | WebSocket communication |
+| File                          | Role                                                                                        |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| `extensions/mirror-server.ts` | Backend — WebSocket + HTTP server, API endpoints, static file serving                       |
+| `public/app.js`               | Main frontend controller                                                                    |
+| `public/session-sidebar.js`   | Sidebar UI — project/session list, search, favorites, context menu (`SessionSidebar` class) |
+| `public/style.css`            | All styles (~6,000+ lines), single file                                                     |
+| `public/state.js`             | Centralized state management                                                                |
+| `public/websocket-client.js`  | WebSocket communication                                                                     |
 
 ## UI Change Pattern
 
 For changes spanning API → frontend rendering → styling, the three files to touch are:
+
 1. `extensions/mirror-server.ts` — add/modify API response fields
 2. `public/session-sidebar.js` — update rendering logic
 3. `public/style.css` — add/modify styles
@@ -25,6 +35,7 @@ For changes spanning API → frontend rendering → styling, the three files to 
 ## Session Storage Encoding
 
 Session directories use an encoded path scheme:
+
 - `--` prefix/suffix = root (`/`)
 - `-` = path separator (`/`)
 
@@ -33,23 +44,28 @@ Example: `/Users/max/Projects/tau` → dir name `--Users-max-Projects-tau--`
 ## API: `/api/sessions`
 
 Response shape:
+
 ```json
 {
-  "projects": [{
-    "path": "/Users/max/Projects/tau",
-    "displayPath": "~/Projects/tau",
-    "dirName": "--Users-max-Projects-tau--",
-    "sessions": [{
-      "id": "...",
-      "timestamp": "2026-01-15T10:30:00Z",
-      "name": "Session Title",
-      "firstMessage": "...",
-      "file": "filename.jsonl",
-      "filePath": "/full/path",
-      "mtime": 1704276600000,
-      "tmux": true
-    }]
-  }]
+  "projects": [
+    {
+      "path": "/Users/max/Projects/tau",
+      "displayPath": "~/Projects/tau",
+      "dirName": "--Users-max-Projects-tau--",
+      "sessions": [
+        {
+          "id": "...",
+          "timestamp": "2026-01-15T10:30:00Z",
+          "name": "Session Title",
+          "firstMessage": "...",
+          "file": "filename.jsonl",
+          "filePath": "/full/path",
+          "mtime": 1704276600000,
+          "tmux": true
+        }
+      ]
+    }
+  ]
 }
 ```
 
