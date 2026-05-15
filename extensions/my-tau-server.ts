@@ -90,10 +90,10 @@ function findPublicDir(): string {
 const SESSIONS_DIR = path.join(process.env.HOME || "~", ".pi/agent/sessions");
 const INSTANCES_DIR = path.join(process.env.HOME || "~", ".pi/my-tau-instances");
 
-// Instance registry — tracks all running my-tau servers
-function registerInstance(port: number, sessionFile: string, cwd: string) {
+// Instance registry — tracks all running my-tau servers and standbys
+function registerInstance(port: number, sessionFile: string, cwd: string, role: "server" | "standby" = "server") {
   fs.mkdirSync(INSTANCES_DIR, { recursive: true });
-  const info = { port, pid: process.pid, sessionFile, cwd, startedAt: new Date().toISOString() };
+  const info = { port, pid: process.pid, sessionFile, cwd, startedAt: new Date().toISOString(), role };
   fs.writeFileSync(path.join(INSTANCES_DIR, `${process.pid}.json`), JSON.stringify(info));
 }
 
@@ -118,6 +118,7 @@ function getRunningInstances(): Array<{
   pid: number;
   sessionFile: string;
   cwd: string;
+  role: "server" | "standby";
 }> {
   if (!fs.existsSync(INSTANCES_DIR)) return [];
   const instances: any[] = [];
@@ -241,6 +242,14 @@ export default function (pi: ExtensionAPI) {
   // Store latest context reference for use in command handlers
   let latestCtx: ExtensionContext | null = null;
 
+  // Role tracking: is this process running the server or standing by?
+  let isServer = false;
+  let takeoverTimer: NodeJS.Timeout | null = null;
+  // Cached server info for standby sessions
+  let serverIp = "";
+  let serverPort = PORT;
+  let serverUrl = "";
+
   // Pending RPC-style requests from browser (id -> resolver)
   const pendingRequests = new Map<string, (response: any) => void>();
 
@@ -275,10 +284,23 @@ export default function (pi: ExtensionAPI) {
   // Helper: update status bar with connection count
   // ═══════════════════════════════════════
   function updateMirrorStatus() {
-    const count = clients.size;
-    const countStr = count > 0 ? `   ${count}` : "";
-    const base = `µτ ${mirrorIp}:${mirrorPort}${mirrorTsIp ? ` • TS: ${mirrorTsIp}:${mirrorPort}` : ""}`;
-    if (latestCtx) latestCtx.ui.setStatus("µτ", base + countStr);
+    if (isServer) {
+      const count = clients.size;
+      const countStr = count > 0 ? `   ${count}` : "";
+      const base = `🟢 ${mirrorIp}:${mirrorPort}${mirrorTsIp ? ` • TS: ${mirrorTsIp}:${mirrorPort}` : ""}`;
+      if (latestCtx) latestCtx.ui.setStatus("µτ", base + countStr);
+    }
+  }
+
+  // ═══════════════════════════════════════
+  // Helper: set standby status (shows existing server address)
+  // ═══════════════════════════════════════
+  function updateStandbyStatus() {
+    if (!isServer && latestCtx) {
+      const theme = latestCtx.ui.theme;
+      const dot = theme.fg("dim", "·");
+      latestCtx.ui.setStatus("µτ", `${dot} ${serverIp}:${serverPort}`);
+    }
   }
 
   // ═══════════════════════════════════════
@@ -286,6 +308,10 @@ export default function (pi: ExtensionAPI) {
   // ═══════════════════════════════════════
   function stopServer() {
     latestCtx = null; // prevent stale ctx use from async WebSocket close events
+    if (takeoverTimer) {
+      clearInterval(takeoverTimer);
+      takeoverTimer = null;
+    }
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
@@ -303,8 +329,79 @@ export default function (pi: ExtensionAPI) {
       server = null;
     }
     unregisterInstance();
+    isServer = false;
     mirrorUrl = "";
     tailscaleUrl = "";
+  }
+
+  // ═══════════════════════════════════════
+  // Takeover monitor — standby sessions check if server is still alive
+  // ═══════════════════════════════════════
+  function startTakeoverMonitor() {
+    if (takeoverTimer) clearInterval(takeoverTimer);
+    takeoverTimer = setInterval(() => {
+      const instances = getRunningInstances();
+      const currentServer = instances.find(i => i.role === "server");
+      
+      if (currentServer) {
+        // Server is still alive — update cached info in case it changed
+        if (currentServer.port !== serverPort) {
+          serverPort = currentServer.port;
+          // Also refresh IP by reading the server instance's registry file
+          const nets = require("node:os").networkInterfaces();
+          // We can't know the server's IP from another process easily,
+          // so keep the current display. The port is what matters.
+        }
+        serverIp = serverIp || "localhost";
+        return;
+      }
+
+      // Server is dead — attempt takeover
+      const standbys = instances.filter(i => i.role === "standby");
+      if (standbys.length === 0) {
+        // No standbys registered, but we're a standby. Something is off.
+        // Attempt takeover since we detected the server is gone.
+        if (process.env.MY_TAU_DEBUG)
+          console.log("[my-tau] Server dead, no standbys found. Taking over...");
+        doTakeover();
+        return;
+      }
+
+      const maxPid = Math.max(...standbys.map(s => s.pid));
+      if (process.pid === maxPid) {
+        // I'm the highest PID standby — take over
+        if (process.env.MY_TAU_DEBUG)
+          console.log(`[my-tau] Server dead, I'm highest PID (${process.pid}). Taking over...`);
+        doTakeover();
+      }
+      // Otherwise, higher PID exists — let them take over, check next cycle
+    }, 3000);
+  }
+
+  function doTakeover() {
+    if (takeoverTimer) {
+      clearInterval(takeoverTimer);
+      takeoverTimer = null;
+    }
+    // Double-check: is there already a server?
+    const instances = getRunningInstances();
+    const existingServer = instances.find(i => i.role === "server");
+    if (existingServer && existingServer.pid !== process.pid) {
+      // Someone beat us to it — go back to standby
+      if (process.env.MY_TAU_DEBUG)
+        console.log(`[my-tau] Takeover aborted — server already running (PID ${existingServer.pid})`);
+      serverIp = "";
+      serverPort = PORT;
+      serverUrl = "";
+      startTakeoverMonitor();
+      return;
+    }
+    // Start our own server
+    if (latestCtx) {
+      if (process.env.MY_TAU_DEBUG)
+        console.log(`[my-tau] Starting server on port ${PORT}...`);
+      startServer(latestCtx);
+    }
   }
 
   // ═══════════════════════════════════════
@@ -313,6 +410,10 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("mytaustop", {
     description: "Stop the my-tau server",
     handler: async (_args, ctx) => {
+      if (!isServer) {
+        ctx.ui.notify("This session is not running the my-tau server (standby mode)", "warning");
+        return;
+      }
       if (!server) {
         ctx.ui.notify("my-tau is not running", "warning");
         return;
@@ -326,8 +427,15 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("mytaustart", {
     description: "Start the my-tau server",
     handler: async (_args, ctx) => {
-      if (server) {
+      if (isServer && server) {
         ctx.ui.notify(`my-tau is already running at ${mirrorUrl}`, "warning");
+        return;
+      }
+      // If we're a standby but an existing server is alive, warn
+      const instances = getRunningInstances();
+      const existingServer = instances.find(i => i.role === "server" && i.pid !== process.pid);
+      if (existingServer) {
+        ctx.ui.notify(`A my-tau server is already running (PID ${existingServer.pid} on port ${existingServer.port})`, "warning");
         return;
       }
       startServer(ctx);
@@ -1782,11 +1890,49 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
         onListening(port);
       });
       server!.once("error", (err: any) => {
-        if (err.code === "EADDRINUSE" && port < PORT + maxAttempts) {
-          if (process.env.MY_TAU_DEBUG)
-            console.log(`[my-tau] Port ${port} in use, trying ${port + 1}...`);
-          server!.removeAllListeners("error");
-          tryListen(port + 1, maxAttempts);
+        if (err.code === "EADDRINUSE") {
+          // Check if another my-tau server is already running on this port
+          const instances = getRunningInstances();
+          const existingServer = instances.find(i => i.role === "server" && i.pid !== process.pid);
+          if (existingServer) {
+            if (process.env.MY_TAU_DEBUG)
+              console.log(`[my-tau] Server already running (PID ${existingServer.pid}), becoming standby`);
+            // Destroy the attempted server, become a standby
+            server!.removeAllListeners("error");
+            if (server) { server.close(); server = null; }
+            if (wss) { wss.close(); wss = null; }
+            isServer = false;
+            // Register as standby pointing to the existing server
+            const sessionFile = latestCtx?.sessionManager.getSessionFile() || "";
+            registerInstance(existingServer.port, sessionFile, latestCtx?.cwd || process.cwd(), "standby");
+            // Detect IP for status display
+            const nets = require("node:os").networkInterfaces();
+            let localIp = "localhost";
+            const preferred = ["en0", "en1"];
+            for (const name of preferred) {
+              for (const net of nets[name] || []) {
+                if (net.family === "IPv4" && !net.internal) {
+                  localIp = net.address;
+                  break;
+                }
+              }
+              if (localIp !== "localhost") break;
+            }
+            serverIp = localIp;
+            serverPort = existingServer.port;
+            updateStandbyStatus();
+            startTakeoverMonitor();
+            return;
+          }
+          // No my-tau server — try next port
+          if (port < PORT + maxAttempts) {
+            if (process.env.MY_TAU_DEBUG)
+              console.log(`[my-tau] Port ${port} in use, trying ${port + 1}...`);
+            server!.removeAllListeners("error");
+            tryListen(port + 1, maxAttempts);
+          } else {
+            latestCtx?.ui.notify(`my-tau failed to start: ${err.message}`, "error");
+          }
         } else {
           latestCtx?.ui.notify(`my-tau failed to start: ${err.message}`, "error");
         }
@@ -1845,11 +1991,12 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       mirrorIp = localIp;
       mirrorPort = port;
       mirrorTsIp = tailscaleIp;
+      isServer = true;
       updateMirrorStatus();
 
-      // Register this instance
+      // Register this instance as server
       const sessionFile = ctx.sessionManager.getSessionFile() || "";
-      registerInstance(port, sessionFile, ctx.cwd || process.cwd());
+      registerInstance(port, sessionFile, ctx.cwd || process.cwd(), "server");
 
       ctx.ui.notify(
         `my-tau: ${mirrorUrl}${tailscaleUrl ? `  •  Tailscale: ${tailscaleUrl}` : ""}  •  /qr for QR code`,
@@ -1861,7 +2008,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
   }
 
   // ═══════════════════════════════════════
-  // Auto-start on session begin
+  // Startup: check for existing server, become server or standby
   // ═══════════════════════════════════════
   pi.on("session_start", async (_event, ctx) => {
     latestCtx = ctx;
@@ -1874,14 +2021,62 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       return;
     }
 
+    // Check if a my-tau server is already running
+    const instances = getRunningInstances();
+    const existingServer = instances.find(i => i.role === "server" && i.pid !== process.pid);
+
+    if (existingServer) {
+      // Server already exists — become a standby
+      if (process.env.MY_TAU_DEBUG)
+        console.log(`[my-tau] Found existing server (PID ${existingServer.pid}, port ${existingServer.port}). Becoming standby.`);
+
+      // Register as standby
+      const sessionFile = ctx.sessionManager.getSessionFile() || "";
+      registerInstance(existingServer.port, sessionFile, ctx.cwd || process.cwd(), "standby");
+
+      // Detect IP for status display
+      const nets = require("node:os").networkInterfaces();
+      let localIp = "localhost";
+      const preferred = ["en0", "en1"];
+      for (const name of preferred) {
+        for (const net of nets[name] || []) {
+          if (net.family === "IPv4" && !net.internal) {
+            localIp = net.address;
+            break;
+          }
+        }
+        if (localIp !== "localhost") break;
+      }
+
+      serverIp = localIp;
+      serverPort = existingServer.port;
+      updateStandbyStatus();
+      startTakeoverMonitor();
+      return;
+    }
+
+    // No server running — start one
+    if (process.env.MY_TAU_DEBUG)
+      console.log("[my-tau] No server found. Starting server...");
     startServer(ctx);
   });
 
   // ═══════════════════════════════════════
-  // Cleanup on shutdown
+  // Cleanup on shutdown — role-aware
   // ═══════════════════════════════════════
   pi.on("session_shutdown", async () => {
-    latestCtx = null; // clear before stop so async close events skip updateMirrorStatus
-    stopServer();
+    if (takeoverTimer) {
+      clearInterval(takeoverTimer);
+      takeoverTimer = null;
+    }
+    if (isServer) {
+      // If we're the server, let standbys know we're going down
+      latestCtx = null;
+      stopServer();
+    } else {
+      // Standby — just clean up
+      unregisterInstance();
+      latestCtx = null;
+    }
   });
 }
