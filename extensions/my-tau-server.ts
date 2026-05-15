@@ -1565,7 +1565,6 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
 
         const projectDir = path.join(SESSIONS_DIR, dir.name);
         const files = fs.readdirSync(projectDir).filter((f) => f.endsWith(".jsonl"));
-        const decodedPath = dir.name.replace(/^--/, "/").replace(/--$/, "").replace(/-/g, "/");
 
         const sessions: any[] = [];
 
@@ -1591,13 +1590,16 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
 
         sessions.sort((a, b) => b.mtime - a.mtime);
 
-        if (sessions.length > 0) {
+        // Use cwd from session entries rather than decoding dir.name
+        // (dir.name encoding is lossy — literal hyphens collide with path separators)
+        const projectCwd = sessions.find((s) => s.cwd)?.cwd;
+        if (sessions.length > 0 && projectCwd) {
           const HOME = process.env.HOME || "";
           const displayPath =
-            HOME && decodedPath.startsWith(HOME + "/")
-              ? "~" + decodedPath.slice(HOME.length)
-              : decodedPath;
-          projects.push({ path: decodedPath, displayPath, dirName: dir.name, sessions });
+            HOME && projectCwd.startsWith(HOME + "/")
+              ? "~" + projectCwd.slice(HOME.length)
+              : projectCwd;
+          projects.push({ path: projectCwd, displayPath, dirName: dir.name, sessions });
         }
       }
 
@@ -1846,7 +1848,6 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
         if (results.length >= MAX_RESULTS) break;
 
         const projectDir = path.join(SESSIONS_DIR, dir.name);
-        const decodedPath = dir.name.replace(/^--/, "/").replace(/--$/, "").replace(/-/g, "/");
         const files = fs.readdirSync(projectDir).filter((f) => f.endsWith(".jsonl"));
 
         for (const file of files) {
@@ -1860,6 +1861,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
             let sessionId = "";
             let sessionName = "";
             let sessionTimestamp = "";
+            let sessionCwd = "";
             let firstMessage = "";
             const matches: any[] = [];
 
@@ -1871,6 +1873,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
                 if (entry.type === "session") {
                   sessionId = entry.id;
                   sessionTimestamp = entry.timestamp || "";
+                  sessionCwd = entry.cwd || "";
                 }
                 if (entry.type === "session_info" && entry.name) {
                   sessionName = entry.name;
@@ -1919,7 +1922,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
             if (matches.length > 0) {
               results.push({
                 filePath,
-                project: decodedPath,
+                project: sessionCwd || dir.name,
                 sessionId,
                 sessionName,
                 sessionTimestamp,

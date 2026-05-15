@@ -1210,6 +1210,7 @@ async function pollInstances() {
     if (res.ok) {
       const data = await res.json();
       liveInstances = data.instances || [];
+      sidebar.setInstances(liveInstances);
       updateMirrorLiveIndicator();
     }
   } catch {}
