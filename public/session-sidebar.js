@@ -275,7 +275,7 @@ export class SessionSidebar {
       const newName = input.value.trim();
       if (newName && newName !== currentName) {
         try {
-          await fetch('/api/rpc', {
+          await fetch(window.getRpcUrl?.() || '/comm/api/rpc', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ type: 'set_session_name', name: newName }),
@@ -298,7 +298,7 @@ export class SessionSidebar {
 
   async exportSession(session) {
     try {
-      const data = await (await fetch('/api/rpc', {
+      const data = await (await fetch(window.getRpcUrl?.() || '/comm/api/rpc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: 'export_html' }),

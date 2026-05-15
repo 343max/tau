@@ -14,10 +14,17 @@ import { Launcher } from './launcher.js';
 
 
 // Initialize components
-const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/ws';
-const wsClient = new WebSocketClient(wsUrl);
+const wsClient = new WebSocketClient(null); // URL set dynamically after fetching instances
 const state = new StateManager();
 const messageRenderer = new MessageRenderer(document.getElementById('messages'));
+
+// Derive RPC URL from current WebSocket URL (both on the comm server)
+function getRpcUrl() {
+  if (!wsClient.url) return '';
+  const wsUrl = new URL(wsClient.url);
+  return `${wsUrl.protocol === 'wss:' ? 'https:' : 'http:'}//${wsUrl.host}/comm/api/rpc`;
+}
+window.getRpcUrl = getRpcUrl;
 const toolCardRenderer = new ToolCardRenderer(document.getElementById('messages'));
 const dialogHandler = new DialogHandler(document.getElementById('dialog-container'), wsClient);
 
@@ -723,7 +730,7 @@ commandPaletteOverlay.addEventListener('click', closeCommandPalette);
 async function rpcCommand(cmd, statusMsg) {
   try {
     if (statusMsg) statusText.textContent = statusMsg;
-    const resp = await fetch('/api/rpc', {
+    const resp = await fetch(getRpcUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cmd),
@@ -787,8 +794,8 @@ let currentThinkingLevel = 'off';
 async function fetchModelInfo() {
   try {
     const [modelsResp, stateResp] = await Promise.all([
-      fetch('/api/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'get_available_models' }) }),
-      fetch('/api/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'get_state' }) }),
+      fetch(getRpcUrl(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'get_available_models' }) }),
+      fetch(getRpcUrl(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'get_state' }) }),
     ]);
     const modelsData = await modelsResp.json();
     const stateData = await stateResp.json();
@@ -1104,8 +1111,8 @@ async function switchSession(sessionFile, session = null, project = null) {
       const otherInstance = liveInstances.find(i => i.sessionFile === sessionFile && i.port !== new URL(wsClient.url).port * 1);
       if (otherInstance) {
         // Reconnect to the other instance
-        const newUrl = `ws://${location.hostname}:${otherInstance.port}/ws`;
-        console.log(`[App] Switching to instance on port ${otherInstance.port}`);
+        const newUrl = `ws://${location.hostname}:${otherInstance.commPort}/comm/ws`;
+        console.log(`[App] Switching to instance on port ${otherInstance.commPort}`);
         wsClient.disconnect();
         wsClient.url = newUrl;
         wsClient.forceReconnect();
@@ -1505,7 +1512,7 @@ async function openSettings() {
 
   // Fetch current state for toggles
   try {
-    const resp = await fetch('/api/rpc', {
+    const resp = await fetch(getRpcUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'get_state' }),
@@ -1865,17 +1872,35 @@ function hideLauncher() {
   document.querySelector('.mode-link:first-child')?.classList.add('active');
 }
 
-// Make the tau icon in sidebar switch back to chat
 document.querySelector('.mode-link:first-child')?.addEventListener('click', () => {
   hideLauncher();
 });
 
-wsClient.connect();
-messageRenderer.renderWelcome();
-sidebar.loadSessions().then(() => {
-  if (isMirrorMode) updateMirrorLiveIndicator();
+window.addEventListener('load', async () => {
+  // Determine the WebSocket URL by fetching running instances
+  try {
+    const res = await fetch('/api/instances');
+    if (res.ok) {
+      const data = await res.json();
+      liveInstances = data.instances || [];
+      // Find the control server's instance for initial connection
+      const controlInstance = liveInstances.find(i => i.role === 'server') || liveInstances[0];
+      if (controlInstance?.commPort) {
+        wsClient.url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.hostname}:${controlInstance.commPort}/comm/ws`;
+        mirrorActiveSessionFile = controlInstance.sessionFile || null;
+        console.log(`[App] Connecting to comm server on port ${controlInstance.commPort}`);
+      }
+    }
+  } catch (e) {
+    console.warn('[App] Failed to fetch instances, will retry:', e);
+  }
+  wsClient.connect();
+  messageRenderer.renderWelcome();
+  sidebar.loadSessions().then(() => {
+    if (isMirrorMode) updateMirrorLiveIndicator();
+  });
+  initLauncher();
 });
-initLauncher();
 
 // Register service worker for PWA
 if ('serviceWorker' in navigator) {

@@ -17,6 +17,7 @@ export class WebSocketClient extends EventTarget {
   }
 
   connect() {
+    if (!this.url) return; // URL not set yet
     if (this.connectionState === 'connecting') return;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
     if (this.ws && this.ws.readyState === WebSocket.CONNECTING) return;

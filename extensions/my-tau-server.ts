@@ -91,10 +91,20 @@ const SESSIONS_DIR = path.join(process.env.HOME || "~", ".pi/agent/sessions");
 const INSTANCES_DIR = path.join(process.env.HOME || "~", ".pi/my-tau-instances");
 
 // Instance registry — tracks all running my-tau servers and standbys
-function registerInstance(port: number, sessionFile: string, cwd: string, role: "server" | "standby" = "server") {
+function registerInstance(port: number, commPort: number, sessionFile: string, cwd: string, role: "server" | "standby" = "server") {
   fs.mkdirSync(INSTANCES_DIR, { recursive: true });
-  const info = { port, pid: process.pid, sessionFile, cwd, startedAt: new Date().toISOString(), role };
+  const info = { port, commPort, pid: process.pid, sessionFile, cwd, startedAt: new Date().toISOString(), role };
   fs.writeFileSync(path.join(INSTANCES_DIR, `${process.pid}.json`), JSON.stringify(info));
+}
+
+function updateInstanceCommPort(commPort: number) {
+  const file = path.join(INSTANCES_DIR, `${process.pid}.json`);
+  if (!fs.existsSync(file)) return;
+  try {
+    const info = JSON.parse(fs.readFileSync(file, "utf8"));
+    info.commPort = commPort;
+    fs.writeFileSync(file, JSON.stringify(info));
+  } catch {}
 }
 
 function updateInstanceSession(sessionFile: string) {
@@ -115,6 +125,7 @@ function unregisterInstance() {
 
 function getRunningInstances(): Array<{
   port: number;
+  commPort: number;
   pid: number;
   sessionFile: string;
   cwd: string;
@@ -235,9 +246,13 @@ function sendAuthRequired(res: http.ServerResponse) {
 
 export default function (pi: ExtensionAPI) {
   let server: http.Server | null = null;
-  let wss: WebSocketServer | null = null;
-  let heartbeatTimer: NodeJS.Timeout | null = null;
   const clients = new Set<WebSocket>();
+
+  // Communication server — runs on every session
+  let commServer: http.Server | null = null;
+  let commWss: WebSocketServer | null = null;
+  let commHeartbeatTimer: NodeJS.Timeout | null = null;
+  let commPort = 0;
 
   // Store latest context reference for use in command handlers
   let latestCtx: ExtensionContext | null = null;
@@ -304,25 +319,12 @@ export default function (pi: ExtensionAPI) {
   }
 
   // ═══════════════════════════════════════
-  // Helper: stop the server
+  // Helper: stop the control server
   // ═══════════════════════════════════════
-  function stopServer() {
-    latestCtx = null; // prevent stale ctx use from async WebSocket close events
+  function stopControlServer() {
     if (takeoverTimer) {
       clearInterval(takeoverTimer);
       takeoverTimer = null;
-    }
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-    }
-    if (wss) {
-      for (const client of clients) {
-        client.close();
-      }
-      clients.clear();
-      wss.close();
-      wss = null;
     }
     if (server) {
       server.close();
@@ -396,12 +398,178 @@ export default function (pi: ExtensionAPI) {
       startTakeoverMonitor();
       return;
     }
-    // Start our own server
+    // Start our own control server
     if (latestCtx) {
       if (process.env.MY_TAU_DEBUG)
-        console.log(`[my-tau] Starting server on port ${PORT}...`);
-      startServer(latestCtx);
+        console.log(`[my-tau] Starting control server on port ${PORT}...`);
+      startControlServer(latestCtx);
     }
+  }
+
+  // ═══════════════════════════════════════
+  // WebSocket connection handler — shared by comm server
+  // ═══════════════════════════════════════
+  function setupWsConnection(wssToUse: WebSocketServer) {
+    wssToUse.on("connection", (ws) => {
+      clients.add(ws);
+      (ws as any).isAlive = true;
+      updateMirrorStatus();
+
+      ws.on("pong", () => {
+        (ws as any).isAlive = true;
+      });
+
+      // Send initial state
+      sendTo(ws, { type: "state", isStreaming: false, mode: "mirror" });
+
+      // Immediately send state snapshot
+      if (latestCtx) {
+        buildStateSnapshot(latestCtx).then((snapshot) => {
+          sendTo(ws, snapshot);
+        });
+      }
+
+      ws.on("message", (data) => {
+        try {
+          const command = JSON.parse(data.toString());
+          handleCommand(ws, command);
+        } catch (e) {
+          if (process.env.MY_TAU_DEBUG)
+            console.error("[my-tau] Failed to parse client message:", e);
+        }
+      });
+
+      ws.on("close", () => {
+        clients.delete(ws);
+        updateMirrorStatus();
+      });
+
+      ws.on("error", (e) => {
+        if (process.env.MY_TAU_DEBUG) console.error("[my-tau] Client error:", e);
+        clients.delete(ws);
+        updateMirrorStatus();
+      });
+    });
+  }
+
+  // ═══════════════════════════════════════
+  // Communication server — runs on every session (random port)
+  // Serves /comm/ws (WebSocket) and /comm/api/rpc (HTTP RPC)
+  // ═══════════════════════════════════════
+  function startCommServer(ctx: ExtensionContext) {
+    if (commServer) return;
+
+    commServer = http.createServer((req, res) => {
+      // CORS headers — comm server runs on a different port than the control server
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+      if (req.method === "OPTIONS") {
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+
+      if (authEnabled && !checkBasicAuth(req)) {
+        sendAuthRequired(res);
+        return;
+      }
+      // Only handle /comm/api/rpc
+      if (req.url === "/comm/api/rpc" && req.method === "POST") {
+        let body = "";
+        req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+        req.on("end", async () => {
+          try {
+            const command = JSON.parse(body);
+            const responsePromise = new Promise<any>((resolve) => {
+              const fakeWs = {
+                readyState: WebSocket.OPEN,
+                send: (data: string) => resolve(JSON.parse(data)),
+              } as any;
+              handleCommand(fakeWs, command);
+            });
+            const response = await responsePromise;
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(response));
+          } catch (e: any) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: e.message }));
+          }
+        });
+        return;
+      }
+      res.writeHead(404);
+      res.end("Not Found");
+    });
+
+    commWss = new WebSocketServer({ noServer: true });
+    setupWsConnection(commWss);
+
+    commServer.on("upgrade", (request, socket, head) => {
+      if (authEnabled && !checkBasicAuth(request)) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="my-tau"\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      if (request.url === "/comm/ws") {
+        commWss!.handleUpgrade(request, socket, head, (ws) => {
+          commWss!.emit("connection", ws, request);
+        });
+      } else {
+        socket.destroy();
+      }
+    });
+
+    // Heartbeat
+    commHeartbeatTimer = setInterval(() => {
+      for (const client of clients) {
+        if (client.readyState !== WebSocket.OPEN) {
+          clients.delete(client);
+          continue;
+        }
+        if (!(client as any).isAlive) {
+          try { client.terminate(); } catch {}
+          clients.delete(client);
+          continue;
+        }
+        (client as any).isAlive = false;
+        try { client.ping(); } catch {}
+      }
+    }, 20000);
+
+    commServer.listen(0, "0.0.0.0", () => {
+      commPort = (commServer!.address() as any).port;
+      if (process.env.MY_TAU_DEBUG)
+        console.log(`[my-tau] Communication server on port ${commPort}`);
+      updateInstanceCommPort(commPort);
+      updateMirrorStatus();
+    });
+
+    commServer.once("error", (err: any) => {
+      if (process.env.MY_TAU_DEBUG)
+        console.error(`[my-tau] Communication server error: ${err.message}`);
+    });
+  }
+
+  function stopCommServer() {
+    if (commHeartbeatTimer) {
+      clearInterval(commHeartbeatTimer);
+      commHeartbeatTimer = null;
+    }
+    if (commWss) {
+      for (const client of clients) {
+        client.close();
+      }
+      clients.clear();
+      commWss.close();
+      commWss = null;
+    }
+    if (commServer) {
+      commServer.close();
+      commServer = null;
+    }
+    commPort = 0;
   }
 
   // ═══════════════════════════════════════
@@ -418,7 +586,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("my-tau is not running", "warning");
         return;
       }
-      stopServer();
+      stopControlServer();
       ctx.ui.setStatus("µτ", "");
       ctx.ui.notify("my-tau server stopped", "info");
     },
@@ -438,7 +606,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`A my-tau server is already running (PID ${existingServer.pid} on port ${existingServer.port})`, "warning");
         return;
       }
-      startServer(ctx);
+      startControlServer(ctx);
       ctx.ui.notify("my-tau server starting...", "info");
     },
   });
@@ -991,6 +1159,13 @@ export default function (pi: ExtensionAPI) {
   function serveStaticFile(req: http.IncomingMessage, res: http.ServerResponse) {
     let urlPath = req.url || "/";
 
+    // Comm endpoints are handled by the communication server
+    if (urlPath.startsWith("/comm/")) {
+      res.writeHead(404);
+      res.end("Not Found");
+      return;
+    }
+
     // Auth gate — exempt /api/health for monitoring
     if (authEnabled && urlPath !== "/api/health" && !checkBasicAuth(req)) {
       sendAuthRequired(res);
@@ -1213,34 +1388,6 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     const sessionMatch = urlPath.match(/^\/api\/sessions\/([^/]+)\/([^/]+)$/);
     if (sessionMatch && req.method === "GET") {
       serveSessionFile(res, sessionMatch[1], sessionMatch[2]);
-      return;
-    }
-
-    // RPC proxy — handle via WebSocket command handler
-    if (urlPath === "/api/rpc" && req.method === "POST") {
-      let body = "";
-      req.on("data", (chunk: Buffer) => {
-        body += chunk.toString();
-      });
-      req.on("end", async () => {
-        try {
-          const command = JSON.parse(body);
-          // Create a fake WebSocket-like object to capture the response
-          const responsePromise = new Promise<any>((resolve) => {
-            const fakeWs = {
-              readyState: WebSocket.OPEN,
-              send: (data: string) => resolve(JSON.parse(data)),
-            } as any;
-            handleCommand(fakeWs, command);
-          });
-          const response = await responsePromise;
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(response));
-        } catch (e: any) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: e.message }));
-        }
-      });
       return;
     }
 
@@ -1797,93 +1944,13 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
   // ═══════════════════════════════════════
   // Start server function (reusable)
   // ═══════════════════════════════════════
-  function startServer(ctx: ExtensionContext) {
+  function startControlServer(ctx: ExtensionContext) {
     if (server) return; // Already running
 
     // Clean up zombie instances from killed tmux panes etc.
     cleanupZombieInstances();
 
     server = http.createServer(serveStaticFile);
-    wss = new WebSocketServer({ noServer: true });
-
-    server.on("upgrade", (request, socket, head) => {
-      if (authEnabled && !checkBasicAuth(request)) {
-        socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="my-tau"\r\n\r\n');
-        socket.destroy();
-        return;
-      }
-      if (request.url === "/ws") {
-        wss!.handleUpgrade(request, socket, head, (ws) => {
-          wss!.emit("connection", ws, request);
-        });
-      } else {
-        socket.destroy();
-      }
-    });
-
-    wss.on("connection", (ws) => {
-      clients.add(ws);
-      (ws as any).isAlive = true;
-      updateMirrorStatus();
-
-      ws.on("pong", () => {
-        (ws as any).isAlive = true;
-      });
-
-      // Send initial state
-      sendTo(ws, { type: "state", isStreaming: false, mode: "mirror" });
-
-      // Immediately send state snapshot
-      if (latestCtx) {
-        buildStateSnapshot(latestCtx).then((snapshot) => {
-          sendTo(ws, snapshot);
-        });
-      }
-
-      ws.on("message", (data) => {
-        try {
-          const command = JSON.parse(data.toString());
-          handleCommand(ws, command);
-        } catch (e) {
-          if (process.env.MY_TAU_DEBUG)
-            console.error("[my-tau] Failed to parse client message:", e);
-        }
-      });
-
-      ws.on("close", () => {
-        clients.delete(ws);
-        updateMirrorStatus();
-      });
-
-      ws.on("error", (e) => {
-        if (process.env.MY_TAU_DEBUG) console.error("[my-tau] Client error:", e);
-        clients.delete(ws);
-        updateMirrorStatus();
-      });
-    });
-
-    // Heartbeat keeps mobile/Tailscale sessions alive and removes stale clients.
-    heartbeatTimer = setInterval(() => {
-      for (const client of clients) {
-        if (client.readyState !== WebSocket.OPEN) {
-          clients.delete(client);
-          continue;
-        }
-
-        if (!(client as any).isAlive) {
-          try {
-            client.terminate();
-          } catch {}
-          clients.delete(client);
-          continue;
-        }
-
-        (client as any).isAlive = false;
-        try {
-          client.ping();
-        } catch {}
-      }
-    }, 20000);
 
     const tryListen = (port: number, maxAttempts = 10) => {
       server!.listen(port, "0.0.0.0", () => {
@@ -1891,20 +1958,19 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       });
       server!.once("error", (err: any) => {
         if (err.code === "EADDRINUSE") {
-          // Check if another my-tau server is already running on this port
+          // Check if another my-tau control server is already running on this port
           const instances = getRunningInstances();
           const existingServer = instances.find(i => i.role === "server" && i.pid !== process.pid);
           if (existingServer) {
             if (process.env.MY_TAU_DEBUG)
-              console.log(`[my-tau] Server already running (PID ${existingServer.pid}), becoming standby`);
+              console.log(`[my-tau] Control server already running (PID ${existingServer.pid}), becoming standby`);
             // Destroy the attempted server, become a standby
             server!.removeAllListeners("error");
             if (server) { server.close(); server = null; }
-            if (wss) { wss.close(); wss = null; }
             isServer = false;
             // Register as standby pointing to the existing server
             const sessionFile = latestCtx?.sessionManager.getSessionFile() || "";
-            registerInstance(existingServer.port, sessionFile, latestCtx?.cwd || process.cwd(), "standby");
+            registerInstance(existingServer.port, commPort, sessionFile, latestCtx?.cwd || process.cwd(), "standby");
             // Detect IP for status display
             const nets = require("node:os").networkInterfaces();
             let localIp = "localhost";
@@ -1924,7 +1990,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
             startTakeoverMonitor();
             return;
           }
-          // No my-tau server — try next port
+          // No my-tau control server — try next port
           if (port < PORT + maxAttempts) {
             if (process.env.MY_TAU_DEBUG)
               console.log(`[my-tau] Port ${port} in use, trying ${port + 1}...`);
@@ -1996,7 +2062,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
 
       // Register this instance as server
       const sessionFile = ctx.sessionManager.getSessionFile() || "";
-      registerInstance(port, sessionFile, ctx.cwd || process.cwd(), "server");
+      registerInstance(port, commPort, sessionFile, ctx.cwd || process.cwd(), "server");
 
       ctx.ui.notify(
         `my-tau: ${mirrorUrl}${tailscaleUrl ? `  •  Tailscale: ${tailscaleUrl}` : ""}  •  /qr for QR code`,
@@ -2008,7 +2074,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
   }
 
   // ═══════════════════════════════════════
-  // Startup: check for existing server, become server or standby
+  // Startup: always start comm server, then check control server role
   // ═══════════════════════════════════════
   pi.on("session_start", async (_event, ctx) => {
     latestCtx = ctx;
@@ -2021,18 +2087,21 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       return;
     }
 
-    // Check if a my-tau server is already running
+    // Always start the communication server first (every session has one)
+    startCommServer(ctx);
+
+    // Check if a my-tau control server is already running
     const instances = getRunningInstances();
     const existingServer = instances.find(i => i.role === "server" && i.pid !== process.pid);
 
     if (existingServer) {
-      // Server already exists — become a standby
+      // Control server already exists — become a standby
       if (process.env.MY_TAU_DEBUG)
-        console.log(`[my-tau] Found existing server (PID ${existingServer.pid}, port ${existingServer.port}). Becoming standby.`);
+        console.log(`[my-tau] Found existing control server (PID ${existingServer.pid}, port ${existingServer.port}). Becoming standby.`);
 
-      // Register as standby
+      // Register as standby (commPort will be updated when comm server binds)
       const sessionFile = ctx.sessionManager.getSessionFile() || "";
-      registerInstance(existingServer.port, sessionFile, ctx.cwd || process.cwd(), "standby");
+      registerInstance(existingServer.port, commPort, sessionFile, ctx.cwd || process.cwd(), "standby");
 
       // Detect IP for status display
       const nets = require("node:os").networkInterfaces();
@@ -2055,10 +2124,10 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       return;
     }
 
-    // No server running — start one
+    // No control server running — start one
     if (process.env.MY_TAU_DEBUG)
-      console.log("[my-tau] No server found. Starting server...");
-    startServer(ctx);
+      console.log("[my-tau] No control server found. Starting control server...");
+    startControlServer(ctx);
   });
 
   // ═══════════════════════════════════════
@@ -2069,10 +2138,12 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       clearInterval(takeoverTimer);
       takeoverTimer = null;
     }
+    // Always stop the communication server
+    stopCommServer();
     if (isServer) {
-      // If we're the server, let standbys know we're going down
+      // If we're the control server, let standbys know we're going down
       latestCtx = null;
-      stopServer();
+      stopControlServer();
     } else {
       // Standby — just clean up
       unregisterInstance();
