@@ -259,6 +259,7 @@ export default function (pi: ExtensionAPI) {
   // Helper: stop the server
   // ═══════════════════════════════════════
   function stopServer() {
+    latestCtx = null;  // prevent stale ctx use from async WebSocket close events
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
@@ -1647,6 +1648,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
   // Cleanup on shutdown
   // ═══════════════════════════════════════
   pi.on("session_shutdown", async () => {
+    latestCtx = null;  // clear before stop so async close events skip updateMirrorStatus
     stopServer();
   });
 }
