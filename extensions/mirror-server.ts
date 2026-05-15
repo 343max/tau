@@ -152,7 +152,7 @@ function cleanupZombieInstances() {
         const tty = execSync(`ps -o tty= -p ${info.pid}`, { encoding: "utf8" }).trim();
         if (!tty || tty === "??" || tty === "-") {
           // No terminal — this is a zombie, kill it
-          console.log(`[Mirror] Killing zombie Tau instance (PID ${info.pid}, port ${info.port})`);
+          if (process.env.TAU_DEBUG) console.log(`[Mirror] Killing zombie Tau instance (PID ${info.pid}, port ${info.port})`);
           process.kill(info.pid, "SIGTERM");
           try { fs.unlinkSync(path.join(INSTANCES_DIR, file)); } catch {}
         }
@@ -241,6 +241,19 @@ export default function (pi: ExtensionAPI) {
 
   let mirrorUrl = "";
   let tailscaleUrl = "";
+  let mirrorIp = "";
+  let mirrorPort = PORT;
+  let mirrorTsIp = "";
+
+  // ═══════════════════════════════════════
+  // Helper: update status bar with connection count
+  // ═══════════════════════════════════════
+  function updateMirrorStatus() {
+    const count = clients.size;
+    const countStr = count > 0 ? `   ${count}` : "";
+    const base = `Mirror: ${mirrorIp}:${mirrorPort}${mirrorTsIp ? ` • TS: ${mirrorTsIp}:${mirrorPort}` : ""}`;
+    if (latestCtx) latestCtx.ui.setStatus("mirror", base + countStr);
+  }
 
   // ═══════════════════════════════════════
   // Helper: stop the server
@@ -280,7 +293,6 @@ export default function (pi: ExtensionAPI) {
       stopServer();
       ctx.ui.setStatus("mirror", "");
       ctx.ui.notify("Tau mirror server stopped", "info");
-      console.log("[Mirror] Server stopped via /taustop");
     },
   });
 
@@ -514,13 +526,13 @@ export default function (pi: ExtensionAPI) {
               const content: any[] = [{ type: "text", text: command.message || "(see attached image)" }];
               for (const img of command.images) {
                 if (!img.data || typeof img.data !== "string") {
-                  console.error("[mirror-server] Skipping image: missing or invalid data");
+                  if (process.env.TAU_DEBUG) console.error("[mirror-server] Skipping image: missing or invalid data");
                   continue;
                 }
                 // Strip data URL prefix if accidentally included
                 const data = img.data.includes(",") ? img.data.split(",")[1] : img.data;
                 const mimeType = (validMimes.includes(img.mimeType) ? img.mimeType : "image/png") as "image/png" | "image/jpeg" | "image/gif" | "image/webp";
-                console.log(`[mirror-server] Image: mimeType=${mimeType}, dataLen=${data.length}, rawMimeType=${img.mimeType}`);
+                if (process.env.TAU_DEBUG) console.log(`[mirror-server] Image: mimeType=${mimeType}, dataLen=${data.length}, rawMimeType=${img.mimeType}`);
                 const imageBlock = {
                   type: "image" as const,
                   data: data,
@@ -528,7 +540,7 @@ export default function (pi: ExtensionAPI) {
                 };
                 // Defensive: verify mimeType is actually set (debug crash where it was missing)
                 if (!imageBlock.mimeType) {
-                  console.error(`[mirror-server] BUG: mimeType is falsy after assignment! img.mimeType=${img.mimeType}, falling back to image/png`);
+                  if (process.env.TAU_DEBUG) console.error(`[mirror-server] BUG: mimeType is falsy after assignment! img.mimeType=${img.mimeType}, falling back to image/png`);
                   imageBlock.mimeType = "image/png";
                 }
                 content.push(imageBlock);
@@ -982,7 +994,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           }
           const { execFile } = await import("node:child_process");
           execFile("open", [fp], (err) => {
-            if (err) console.error("[Mirror] open failed:", err.message);
+            if (err && process.env.TAU_DEBUG) console.error("[Mirror] open failed:", err.message);
           });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true }));
@@ -1485,9 +1497,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     });
 
     wss.on("connection", (ws) => {
-      console.log("[Mirror] Browser client connected");
       clients.add(ws);
       (ws as any).isAlive = true;
+      updateMirrorStatus();
 
       ws.on("pong", () => {
         (ws as any).isAlive = true;
@@ -1508,18 +1520,19 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           const command = JSON.parse(data.toString());
           handleCommand(ws, command);
         } catch (e) {
-          console.error("[Mirror] Failed to parse client message:", e);
+          if (process.env.TAU_DEBUG) console.error("[Mirror] Failed to parse client message:", e);
         }
       });
 
       ws.on("close", () => {
-        console.log("[Mirror] Browser client disconnected");
         clients.delete(ws);
+        updateMirrorStatus();
       });
 
       ws.on("error", (e) => {
-        console.error("[Mirror] Client error:", e);
+        if (process.env.TAU_DEBUG) console.error("[Mirror] Client error:", e);
         clients.delete(ws);
+        updateMirrorStatus();
       });
     });
 
@@ -1548,11 +1561,11 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       });
       server!.once("error", (err: any) => {
         if (err.code === "EADDRINUSE" && port < PORT + maxAttempts) {
-          console.log(`[Mirror] Port ${port} in use, trying ${port + 1}...`);
+          if (process.env.TAU_DEBUG) console.log(`[Mirror] Port ${port} in use, trying ${port + 1}...`);
           server!.removeAllListeners("error");
           tryListen(port + 1, maxAttempts);
         } else {
-          console.error(`[Mirror] Failed to start server:`, err.message);
+          latestCtx?.ui.notify(`Tau mirror failed to start: ${err.message}`, "error");
         }
       });
     };
@@ -1601,8 +1614,10 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
 
       mirrorUrl = `http://${localIp}:${port}`;
       tailscaleUrl = tailscaleIp ? `http://${tailscaleIp}:${port}` : "";
-      console.log(`[Mirror] Tau mirror server running on ${mirrorUrl}${tailscaleUrl ? `  •  Tailscale: ${tailscaleUrl}` : ""}`);
-      ctx.ui.setStatus("mirror", `Mirror: ${localIp}:${port}${tailscaleIp ? ` • TS: ${tailscaleIp}:${port}` : ""}`);
+      mirrorIp = localIp;
+      mirrorPort = port;
+      mirrorTsIp = tailscaleIp;
+      updateMirrorStatus();
 
       // Register this instance
       const sessionFile = ctx.sessionManager.getSessionFile() || "";
@@ -1621,7 +1636,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     latestCtx = ctx;
 
     if (!TAU_AUTO_START) {
-      console.log("[Mirror] Tau auto-start disabled (TAU_DISABLED=1). Use /tau-start to start manually.");
+      ctx.ui.notify("Tau auto-start disabled (TAU_DISABLED=1). Use /tau-start to start manually.", "info");
       return;
     }
 
@@ -1633,6 +1648,5 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
   // ═══════════════════════════════════════
   pi.on("session_shutdown", async () => {
     stopServer();
-    console.log("[Mirror] Server shut down");
   });
 }
