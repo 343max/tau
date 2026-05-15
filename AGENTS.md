@@ -41,6 +41,9 @@ Session directories use an encoded path scheme:
 
 Example: `/Users/max/Projects/tau` → dir name `--Users-max-Projects-tau--`
 
+- **Encoding is lossy** — the scheme cannot distinguish literal hyphens from path separators. E.g., `/private/tmp/new-session` → dir name `--private-tmp-new-session--` → decodes as `/private/tmp/new/session`. Never decode paths from directory names.
+- **Use `cwd` from session headers instead** — every `.jsonl` file's first entry (`type: "session"`) contains the real `cwd` field. `parseSessionFile()` already extracts it. Always prefer `cwd` over reverse-engineering paths from directory names. This applies to `serveSessionsList` (/api/sessions), `serveSearch` (/api/search), and anywhere else path is derived from a session dir.
+
 ## API: `/api/sessions`
 
 Response shape:
