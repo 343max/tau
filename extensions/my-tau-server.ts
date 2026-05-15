@@ -1,12 +1,12 @@
 /**
- * Mirror Server Extension
+ * my-tau Server Extension
  * 
  * Starts a WebSocket + HTTP server inside the running Pi process,
  * allowing a browser to connect and mirror the TUI session in real-time.
  * 
  * - Forwards all Pi events to connected browser clients
  * - Accepts commands from the browser and executes them via the extension API
- * - Serves static files for the Tau web UI
+ * - Serves static files for the my-tau web UI
  * - Sends full state snapshot on client connect (messages, model, etc.)
  */
 
@@ -22,18 +22,18 @@ function loadTauSettings(): { port: number; autoStart: boolean; user: string; pa
   let settings: any = {};
   try {
     const settingsPath = path.join(process.env.HOME || "~", ".pi/agent/settings.json");
-    settings = JSON.parse(fs.readFileSync(settingsPath, "utf8")).tau || {};
+    settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"))["my-tau"] || {};
   } catch {}
   return {
-    port: parseInt(process.env.TAU_MIRROR_PORT || settings.port || "3001"),
+    port: parseInt(process.env.MY_TAU_MIRROR_PORT || settings.port || "3001"),
     autoStart: !(
-      process.env.TAU_DISABLED === "1" || process.env.TAU_DISABLED === "true" ||
+      process.env.MY_TAU_DISABLED === "1" || process.env.MY_TAU_DISABLED === "true" ||
       settings.disabled === true
     ),
-    user: process.env.TAU_USER || settings.user || "",
-    pass: process.env.TAU_PASS || settings.pass || "",
+    user: process.env.MY_TAU_USER || settings.user || "",
+    pass: process.env.MY_TAU_PASS || settings.pass || "",
     authEnabled: settings.authEnabled,
-    projectsDir: process.env.TAU_PROJECTS_DIR || settings.projectsDir,
+    projectsDir: process.env.MY_TAU_PROJECTS_DIR || settings.projectsDir,
   };
 }
 
@@ -45,7 +45,7 @@ const AUTH_PASS = TAU_SETTINGS.pass;
 const AUTH_CONFIGURED = !!(AUTH_USER && AUTH_PASS);
 let authEnabled = AUTH_CONFIGURED && TAU_SETTINGS.authEnabled !== false;
 // @ts-ignore — __dirname is provided by jiti at runtime
-const STATIC_DIR = process.env.TAU_STATIC_DIR || findPublicDir();
+const STATIC_DIR = process.env.MY_TAU_STATIC_DIR || findPublicDir();
 
 function findPublicDir(): string {
     const candidates: string[] = [];
@@ -64,13 +64,13 @@ function findPublicDir(): string {
     // 2) Installed package path (for npm-installed extension execution)
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const pkgPath = require.resolve("tau-mirror/package.json");
+      const pkgPath = require.resolve("my-tau/package.json");
       addCandidate(path.join(path.dirname(pkgPath), "public"));
     } catch {}
 
     // 3) Development fallback from current working directory
     addCandidate(path.resolve(process.cwd(), "public"));
-    addCandidate(path.resolve(process.cwd(), "node_modules/tau-mirror/public"));
+    addCandidate(path.resolve(process.cwd(), "node_modules/my-tau/public"));
 
     for (const candidate of candidates) {
       if (fs.existsSync(path.join(candidate, "index.html"))) return candidate;
@@ -80,9 +80,9 @@ function findPublicDir(): string {
     return path.resolve(process.cwd(), "public");
 }
 const SESSIONS_DIR = path.join(process.env.HOME || "~", ".pi/agent/sessions");
-const INSTANCES_DIR = path.join(process.env.HOME || "~", ".pi/tau-instances");
+const INSTANCES_DIR = path.join(process.env.HOME || "~", ".pi/my-tau-instances");
 
-// Instance registry — tracks all running Tau servers
+// Instance registry — tracks all running my-tau servers
 function registerInstance(port: number, sessionFile: string, cwd: string) {
   fs.mkdirSync(INSTANCES_DIR, { recursive: true });
   const info = { port, pid: process.pid, sessionFile, cwd, startedAt: new Date().toISOString() };
@@ -124,7 +124,7 @@ function getRunningInstances(): Array<{ port: number; pid: number; sessionFile: 
 }
 
 /**
- * Kill zombie Tau instances — processes that are alive but orphaned
+ * Kill zombie my-tau instances — processes that are alive but orphaned
  * (e.g. tmux pane was killed without session_shutdown firing).
  * A zombie is detected by checking if the process has a controlling terminal.
  * If it doesn't, the HTTP server is the only thing keeping it alive.
@@ -152,7 +152,7 @@ function cleanupZombieInstances() {
         const tty = execSync(`ps -o tty= -p ${info.pid}`, { encoding: "utf8" }).trim();
         if (!tty || tty === "??" || tty === "-") {
           // No terminal — this is a zombie, kill it
-          if (process.env.TAU_DEBUG) console.log(`[Mirror] Killing zombie Tau instance (PID ${info.pid}, port ${info.port})`);
+          if (process.env.MY_TAU_DEBUG) console.log(`[my-tau] Killing zombie my-tau instance (PID ${info.pid}, port ${info.port})`);
           process.kill(info.pid, "SIGTERM");
           try { fs.unlinkSync(path.join(INSTANCES_DIR, file)); } catch {}
         }
@@ -182,8 +182,8 @@ function saveTauSetting(key: string, value: any) {
   const settingsPath = path.join(process.env.HOME || "~", ".pi/agent/settings.json");
   try {
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-    if (!settings.tau) settings.tau = {};
-    settings.tau[key] = value;
+    if (!settings["my-tau"]) settings["my-tau"] = {};
+    settings["my-tau"][key] = value;
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   } catch {}
 }
@@ -200,7 +200,7 @@ function checkBasicAuth(req: http.IncomingMessage): boolean {
 
 function sendAuthRequired(res: http.ServerResponse) {
   res.writeHead(401, {
-    "WWW-Authenticate": 'Basic realm="Tau"',
+    "WWW-Authenticate": 'Basic realm="my-tau"',
     "Content-Type": "application/json",
   });
   res.end(JSON.stringify({ error: "Unauthorized" }));
@@ -251,8 +251,8 @@ export default function (pi: ExtensionAPI) {
   function updateMirrorStatus() {
     const count = clients.size;
     const countStr = count > 0 ? `   ${count}` : "";
-    const base = `Mirror: ${mirrorIp}:${mirrorPort}${mirrorTsIp ? ` • TS: ${mirrorTsIp}:${mirrorPort}` : ""}`;
-    if (latestCtx) latestCtx.ui.setStatus("mirror", base + countStr);
+    const base = `τ ${mirrorIp}:${mirrorPort}${mirrorTsIp ? ` • TS: ${mirrorTsIp}:${mirrorPort}` : ""}`;
+    if (latestCtx) latestCtx.ui.setStatus("τ", base + countStr);
   }
 
   // ═══════════════════════════════════════
@@ -281,41 +281,41 @@ export default function (pi: ExtensionAPI) {
   }
 
   // ═══════════════════════════════════════
-  // /tau-stop and /tau-start commands
+  // /my-tau-stop and /my-tau-start commands
   // ═══════════════════════════════════════
-  pi.registerCommand("taustop", {
-    description: "Stop the Tau mirror server",
+  pi.registerCommand("mytaustop", {
+    description: "Stop the my-tau server",
     handler: async (_args, ctx) => {
       if (!server) {
-        ctx.ui.notify("Tau is not running", "warning");
+        ctx.ui.notify("my-tau is not running", "warning");
         return;
       }
       stopServer();
-      ctx.ui.setStatus("mirror", "");
-      ctx.ui.notify("Tau mirror server stopped", "info");
+      ctx.ui.setStatus("τ", "");
+      ctx.ui.notify("my-tau server stopped", "info");
     },
   });
 
-  pi.registerCommand("taustart", {
-    description: "Start the Tau mirror server",
+  pi.registerCommand("mytaustart", {
+    description: "Start the my-tau server",
     handler: async (_args, ctx) => {
       if (server) {
-        ctx.ui.notify(`Tau is already running at ${mirrorUrl}`, "warning");
+        ctx.ui.notify(`my-tau is already running at ${mirrorUrl}`, "warning");
         return;
       }
       startServer(ctx);
-      ctx.ui.notify("Tau mirror server starting...", "info");
+      ctx.ui.notify("my-tau server starting...", "info");
     },
   });
 
   // ═══════════════════════════════════════
-  // /qr command — show QR code to connect
+  // /my-tau and /qr commands
   // ═══════════════════════════════════════
-  pi.registerCommand("tau", {
-    description: "Open Tau web UI in browser",
+  pi.registerCommand("mytau", {
+    description: "Open my-tau web UI in browser",
     handler: async (_args, ctx) => {
       if (!mirrorUrl) {
-        ctx.ui.notify("Mirror server not running yet", "warning");
+        ctx.ui.notify("my-tau server not running yet", "warning");
         return;
       }
       const { exec } = require("node:child_process");
@@ -325,14 +325,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("qr", {
-    description: "Show QR code for Tau mirror URL",
+    description: "Show QR code for my-tau URL",
     handler: async (_args, ctx) => {
       if (!mirrorUrl) {
-        ctx.ui.notify("Mirror server not running yet", "warning");
+        ctx.ui.notify("my-tau server not running yet", "warning");
         return;
       }
       const qrPageUrl = `${mirrorUrl}/api/qr`;
-      ctx.ui.notify(`Tau: ${mirrorUrl}  •  QR: ${qrPageUrl}`, "info");
+      ctx.ui.notify(`my-tau: ${mirrorUrl}  •  QR: ${qrPageUrl}`, "info");
       // Open in default browser
       const { exec } = require("node:child_process");
       exec(`open "${qrPageUrl}"`);
@@ -526,13 +526,13 @@ export default function (pi: ExtensionAPI) {
               const content: any[] = [{ type: "text", text: command.message || "(see attached image)" }];
               for (const img of command.images) {
                 if (!img.data || typeof img.data !== "string") {
-                  if (process.env.TAU_DEBUG) console.error("[mirror-server] Skipping image: missing or invalid data");
+                  if (process.env.MY_TAU_DEBUG) console.error("[my-tau-server] Skipping image: missing or invalid data");
                   continue;
                 }
                 // Strip data URL prefix if accidentally included
                 const data = img.data.includes(",") ? img.data.split(",")[1] : img.data;
                 const mimeType = (validMimes.includes(img.mimeType) ? img.mimeType : "image/png") as "image/png" | "image/jpeg" | "image/gif" | "image/webp";
-                if (process.env.TAU_DEBUG) console.log(`[mirror-server] Image: mimeType=${mimeType}, dataLen=${data.length}, rawMimeType=${img.mimeType}`);
+                if (process.env.MY_TAU_DEBUG) console.log(`[my-tau-server] Image: mimeType=${mimeType}, dataLen=${data.length}, rawMimeType=${img.mimeType}`);
                 const imageBlock = {
                   type: "image" as const,
                   data: data,
@@ -540,7 +540,7 @@ export default function (pi: ExtensionAPI) {
                 };
                 // Defensive: verify mimeType is actually set (debug crash where it was missing)
                 if (!imageBlock.mimeType) {
-                  if (process.env.TAU_DEBUG) console.error(`[mirror-server] BUG: mimeType is falsy after assignment! img.mimeType=${img.mimeType}, falling back to image/png`);
+                  if (process.env.MY_TAU_DEBUG) console.error(`[my-tau-server] BUG: mimeType is falsy after assignment! img.mimeType=${img.mimeType}, falling back to image/png`);
                   imageBlock.mimeType = "image/png";
                 }
                 content.push(imageBlock);
@@ -787,7 +787,7 @@ export default function (pi: ExtensionAPI) {
 
         case "set_auth": {
           if (!AUTH_CONFIGURED) {
-            sendTo(ws, error("set_auth", "No credentials configured. Set tau.user and tau.pass in settings.json"));
+            sendTo(ws, error("set_auth", "No credentials configured. Set my-tau.user and my-tau.pass in settings.json"));
             break;
           }
           authEnabled = !!command.enabled;
@@ -884,10 +884,10 @@ export default function (pi: ExtensionAPI) {
           : "";
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(`<!DOCTYPE html>
-<html><head><meta name="viewport" content="width=device-width"><title>Tau — Connect</title>
+<html><head><meta name="viewport" content="width=device-width"><title>my-tau — Connect</title>
 <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#131316;color:#fff;font-family:-apple-system,sans-serif}
 img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rgba(255,255,255,0.5);font-size:13px;margin-top:8px}</style>
-</head><body><p style="color:rgba(255,255,255,0.3);font-size:11px">LAN</p><img src="${dataUrls[0]}" width="256" height="256" alt="QR Code"><a href="${mirrorUrl}">${mirrorUrl}</a>${tsSection}<p style="margin-top:16px">Scan to open Tau on your phone</p></body></html>`);
+</head><body><p style="color:rgba(255,255,255,0.3);font-size:11px">LAN</p><img src="${dataUrls[0]}" width="256" height="256" alt="QR Code"><a href="${mirrorUrl}">${mirrorUrl}</a>${tsSection}<p style="margin-top:16px">Scan to open my-tau on your phone</p></body></html>`);
       }).catch((e: any) => {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: e.message }));
@@ -994,7 +994,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           }
           const { execFile } = await import("node:child_process");
           execFile("open", [fp], (err) => {
-            if (err && process.env.TAU_DEBUG) console.error("[Mirror] open failed:", err.message);
+            if (err && process.env.MY_TAU_DEBUG) console.error("[my-tau] open failed:", err.message);
           });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true }));
@@ -1483,7 +1483,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
 
     server.on("upgrade", (request, socket, head) => {
       if (authEnabled && !checkBasicAuth(request)) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"Tau\"\r\n\r\n");
+        socket.write("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"my-tau\"\r\n\r\n");
         socket.destroy();
         return;
       }
@@ -1520,7 +1520,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           const command = JSON.parse(data.toString());
           handleCommand(ws, command);
         } catch (e) {
-          if (process.env.TAU_DEBUG) console.error("[Mirror] Failed to parse client message:", e);
+          if (process.env.MY_TAU_DEBUG) console.error("[my-tau] Failed to parse client message:", e);
         }
       });
 
@@ -1530,7 +1530,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       });
 
       ws.on("error", (e) => {
-        if (process.env.TAU_DEBUG) console.error("[Mirror] Client error:", e);
+        if (process.env.MY_TAU_DEBUG) console.error("[my-tau] Client error:", e);
         clients.delete(ws);
         updateMirrorStatus();
       });
@@ -1561,11 +1561,11 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       });
       server!.once("error", (err: any) => {
         if (err.code === "EADDRINUSE" && port < PORT + maxAttempts) {
-          if (process.env.TAU_DEBUG) console.log(`[Mirror] Port ${port} in use, trying ${port + 1}...`);
+          if (process.env.MY_TAU_DEBUG) console.log(`[my-tau] Port ${port} in use, trying ${port + 1}...`);
           server!.removeAllListeners("error");
           tryListen(port + 1, maxAttempts);
         } else {
-          latestCtx?.ui.notify(`Tau mirror failed to start: ${err.message}`, "error");
+          latestCtx?.ui.notify(`my-tau failed to start: ${err.message}`, "error");
         }
       });
     };
@@ -1623,7 +1623,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       const sessionFile = ctx.sessionManager.getSessionFile() || "";
       registerInstance(port, sessionFile, ctx.cwd || process.cwd());
 
-      ctx.ui.notify(`Tau mirror: ${mirrorUrl}${tailscaleUrl ? `  •  Tailscale: ${tailscaleUrl}` : ""}  •  /qr for QR code`, "info");
+      ctx.ui.notify(`my-tau: ${mirrorUrl}${tailscaleUrl ? `  •  Tailscale: ${tailscaleUrl}` : ""}  •  /qr for QR code`, "info");
     };
 
     tryListen(PORT);
@@ -1636,7 +1636,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     latestCtx = ctx;
 
     if (!TAU_AUTO_START) {
-      ctx.ui.notify("Tau auto-start disabled (TAU_DISABLED=1). Use /tau-start to start manually.", "info");
+      ctx.ui.notify("my-tau auto-start disabled (MY_TAU_DISABLED=1). Use /my-tau-start to start manually.", "info");
       return;
     }
 

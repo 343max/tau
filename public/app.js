@@ -1146,7 +1146,7 @@ async function switchSession(sessionFile, session = null, project = null) {
 // ═══════════════════════════════════════
 
 function handleMirrorSync(data) {
-  console.log('[Mirror] Received state snapshot:', data.entries?.length, 'entries');
+  console.log('[my-tau] Received state snapshot:', data.entries?.length, 'entries');
   isMirrorMode = true;
 
   // Track the active session
