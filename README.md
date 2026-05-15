@@ -19,18 +19,18 @@ my-tau connects to your running Pi TUI and gives you a second view in the browse
 - **Live mirroring** — streams messages, tool calls, and thinking blocks in real-time
 - **Works on any device** — open it on your phone, tablet, or another monitor
 - **Session browser** — view history from any past session
-- **No extra process** — the Pi extension *is* the server
+- **No extra process** — the Pi extension _is_ the server
 
 ## Install
 
 ```bash
-pi install git:github.com/deflating/tau
+pi install git:github.com/343max/tau
 ```
 
 ## Usage
 
 1. Start Pi normally in your terminal
-2. Open the URL shown in the status bar (default: `http://localhost:3001`)
+2. Open the URL shown in the status bar
 3. That's it
 
 Type `/my-tau` in the terminal to open the UI in your browser, or `/qr` to show a QR code and scan it to access via your phone.
@@ -38,6 +38,7 @@ Type `/my-tau` in the terminal to open the UI in your browser, or `/qr` to show 
 ## Features
 
 ### Chat
+
 - Full markdown rendering with syntax-highlighted code blocks
 - Streaming responses with typing indicator
 - Image attachments (paste, drag & drop, or button)
@@ -47,6 +48,7 @@ Type `/my-tau` in the terminal to open the UI in your browser, or `/qr` to show 
 - Message queuing — type while the agent is working, messages queue and auto-send
 
 ### Session Management
+
 - Browse all past sessions grouped by project
 - Full-text search across all session history with highlighted snippets
 - Sorted by last modified (most recent first)
@@ -56,26 +58,31 @@ Type `/my-tau` in the terminal to open the UI in your browser, or `/qr` to show 
 - Favourite sessions, tags, and filtering
 
 ### Model & Thinking
+
 - Model picker with search/filter and keyboard support
 - Thinking level toggle (off/low/medium/high)
 - Token usage percentage with context window visualiser
 - Cost tracking per session
 
 ### Voice Input
+
 - Mic button in the input area using Web Speech API (on-device dictation)
 - Live transcription into the textarea
 - Pulses red while recording
 
 ### File Browser
+
 - Right sidebar with lazy-loaded file tree
 - Navigate directories, open files natively
 - Drag files onto the input to insert their path
 
 ### Compaction
+
 - Manual context compaction with status display
 - Auto-compaction support
 
 ### PWA
+
 - Installable as a standalone app on iOS, Android, and macOS
 - Custom app icons
 - Service worker with network-first caching
@@ -84,13 +91,13 @@ Type `/my-tau` in the terminal to open the UI in your browser, or `/qr` to show 
 
 Environment variables (set before starting Pi):
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MY_TAU_MIRROR_PORT` | `3001` | Server port |
-| `MY_TAU_STATIC_DIR` | *(bundled)* | Override static files path |
-| `MY_TAU_DISABLED` | `0` | Set to `1` to disable my-tau (it stays installed but won't start the server) |
-| `MY_TAU_USER` | *(none)* | HTTP Basic Auth username (both `MY_TAU_USER` and `MY_TAU_PASS` required to enable) |
-| `MY_TAU_PASS` | *(none)* | HTTP Basic Auth password |
+| Variable             | Default     | Description                                                                        |
+| -------------------- | ----------- | ---------------------------------------------------------------------------------- |
+| `MY_TAU_MIRROR_PORT` | `3001`      | Server port                                                                        |
+| `MY_TAU_STATIC_DIR`  | _(bundled)_ | Override static files path                                                         |
+| `MY_TAU_DISABLED`    | `0`         | Set to `1` to disable my-tau (it stays installed but won't start the server)       |
+| `MY_TAU_USER`        | _(none)_    | HTTP Basic Auth username (both `MY_TAU_USER` and `MY_TAU_PASS` required to enable) |
+| `MY_TAU_PASS`        | _(none)_    | HTTP Basic Auth password                                                           |
 
 ### Authentication
 
@@ -150,7 +157,7 @@ There's no separate server to run. The extension auto-loads when Pi starts and s
 Clone and point the extension at the local static files:
 
 ```bash
-git clone https://github.com/deflating/tau.git
+git clone https://github.com/343max/tau.git
 cd tau
 MY_TAU_STATIC_DIR=$(pwd)/public pi
 ```
