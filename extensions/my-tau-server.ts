@@ -1,9 +1,9 @@
 /**
  * my-tau Server Extension
- * 
+ *
  * Starts a WebSocket + HTTP server inside the running Pi process,
  * allowing a browser to connect and mirror the TUI session in real-time.
- * 
+ *
  * - Forwards all Pi events to connected browser clients
  * - Accepts commands from the browser and executes them via the extension API
  * - Serves static files for the my-tau web UI
@@ -18,7 +18,14 @@ import * as path from "node:path";
 import QRCode from "qrcode";
 
 // Load tau settings from ~/.pi/agent/settings.json (falls back to env vars)
-function loadTauSettings(): { port: number; autoStart: boolean; user: string; pass: string; authEnabled?: boolean; projectsDir?: string } {
+function loadTauSettings(): {
+  port: number;
+  autoStart: boolean;
+  user: string;
+  pass: string;
+  authEnabled?: boolean;
+  projectsDir?: string;
+} {
   let settings: any = {};
   try {
     const settingsPath = path.join(process.env.HOME || "~", ".pi/agent/settings.json");
@@ -27,7 +34,8 @@ function loadTauSettings(): { port: number; autoStart: boolean; user: string; pa
   return {
     port: parseInt(process.env.MY_TAU_MIRROR_PORT || settings.port || "3001"),
     autoStart: !(
-      process.env.MY_TAU_DISABLED === "1" || process.env.MY_TAU_DISABLED === "true" ||
+      process.env.MY_TAU_DISABLED === "1" ||
+      process.env.MY_TAU_DISABLED === "true" ||
       settings.disabled === true
     ),
     user: process.env.MY_TAU_USER || settings.user || "",
@@ -48,36 +56,36 @@ let authEnabled = AUTH_CONFIGURED && TAU_SETTINGS.authEnabled !== false;
 const STATIC_DIR = process.env.MY_TAU_STATIC_DIR || findPublicDir();
 
 function findPublicDir(): string {
-    const candidates: string[] = [];
-    const seen = new Set<string>();
-    const addCandidate = (dir: string) => {
-      const normalized = path.resolve(dir);
-      if (seen.has(normalized)) return;
-      seen.add(normalized);
-      candidates.push(normalized);
-    };
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const addCandidate = (dir: string) => {
+    const normalized = path.resolve(dir);
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
 
-    // 1) Common extension-relative paths
-    addCandidate(path.resolve(__dirname, "public"));
-    addCandidate(path.resolve(__dirname, "../public"));
+  // 1) Common extension-relative paths
+  addCandidate(path.resolve(__dirname, "public"));
+  addCandidate(path.resolve(__dirname, "../public"));
 
-    // 2) Installed package path (for npm-installed extension execution)
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const pkgPath = require.resolve("my-tau/package.json");
-      addCandidate(path.join(path.dirname(pkgPath), "public"));
-    } catch {}
+  // 2) Installed package path (for npm-installed extension execution)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pkgPath = require.resolve("my-tau/package.json");
+    addCandidate(path.join(path.dirname(pkgPath), "public"));
+  } catch {}
 
-    // 3) Development fallback from current working directory
-    addCandidate(path.resolve(process.cwd(), "public"));
-    addCandidate(path.resolve(process.cwd(), "node_modules/my-tau/public"));
+  // 3) Development fallback from current working directory
+  addCandidate(path.resolve(process.cwd(), "public"));
+  addCandidate(path.resolve(process.cwd(), "node_modules/my-tau/public"));
 
-    for (const candidate of candidates) {
-      if (fs.existsSync(path.join(candidate, "index.html"))) return candidate;
-    }
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, "index.html"))) return candidate;
+  }
 
-    // Keep previous fallback behavior
-    return path.resolve(process.cwd(), "public");
+  // Keep previous fallback behavior
+  return path.resolve(process.cwd(), "public");
 }
 const SESSIONS_DIR = path.join(process.env.HOME || "~", ".pi/agent/sessions");
 const INSTANCES_DIR = path.join(process.env.HOME || "~", ".pi/my-tau-instances");
@@ -100,10 +108,17 @@ function updateInstanceSession(sessionFile: string) {
 }
 
 function unregisterInstance() {
-  try { fs.unlinkSync(path.join(INSTANCES_DIR, `${process.pid}.json`)); } catch {}
+  try {
+    fs.unlinkSync(path.join(INSTANCES_DIR, `${process.pid}.json`));
+  } catch {}
 }
 
-function getRunningInstances(): Array<{ port: number; pid: number; sessionFile: string; cwd: string }> {
+function getRunningInstances(): Array<{
+  port: number;
+  pid: number;
+  sessionFile: string;
+  cwd: string;
+}> {
   if (!fs.existsSync(INSTANCES_DIR)) return [];
   const instances: any[] = [];
   for (const file of fs.readdirSync(INSTANCES_DIR)) {
@@ -116,7 +131,9 @@ function getRunningInstances(): Array<{ port: number; pid: number; sessionFile: 
         instances.push(info);
       } catch {
         // Process dead — clean up stale file
-        try { fs.unlinkSync(path.join(INSTANCES_DIR, file)); } catch {}
+        try {
+          fs.unlinkSync(path.join(INSTANCES_DIR, file));
+        } catch {}
       }
     } catch {}
   }
@@ -143,7 +160,9 @@ function cleanupZombieInstances() {
         process.kill(info.pid, 0);
       } catch {
         // Already dead — clean up
-        try { fs.unlinkSync(path.join(INSTANCES_DIR, file)); } catch {}
+        try {
+          fs.unlinkSync(path.join(INSTANCES_DIR, file));
+        } catch {}
         continue;
       }
       // Check if process has a controlling terminal (TTY)
@@ -152,13 +171,20 @@ function cleanupZombieInstances() {
         const tty = execSync(`ps -o tty= -p ${info.pid}`, { encoding: "utf8" }).trim();
         if (!tty || tty === "??" || tty === "-") {
           // No terminal — this is a zombie, kill it
-          if (process.env.MY_TAU_DEBUG) console.log(`[my-tau] Killing zombie my-tau instance (PID ${info.pid}, port ${info.port})`);
+          if (process.env.MY_TAU_DEBUG)
+            console.log(
+              `[my-tau] Killing zombie my-tau instance (PID ${info.pid}, port ${info.port})`,
+            );
           process.kill(info.pid, "SIGTERM");
-          try { fs.unlinkSync(path.join(INSTANCES_DIR, file)); } catch {}
+          try {
+            fs.unlinkSync(path.join(INSTANCES_DIR, file));
+          } catch {}
         }
       } catch {
         // ps failed — process might have died between checks, clean up
-        try { fs.unlinkSync(path.join(INSTANCES_DIR, file)); } catch {}
+        try {
+          fs.unlinkSync(path.join(INSTANCES_DIR, file));
+        } catch {}
       }
     } catch {}
   }
@@ -251,15 +277,15 @@ export default function (pi: ExtensionAPI) {
   function updateMirrorStatus() {
     const count = clients.size;
     const countStr = count > 0 ? `   ${count}` : "";
-    const base = `τ ${mirrorIp}:${mirrorPort}${mirrorTsIp ? ` • TS: ${mirrorTsIp}:${mirrorPort}` : ""}`;
-    if (latestCtx) latestCtx.ui.setStatus("τ", base + countStr);
+    const base = `µτ ${mirrorIp}:${mirrorPort}${mirrorTsIp ? ` • TS: ${mirrorTsIp}:${mirrorPort}` : ""}`;
+    if (latestCtx) latestCtx.ui.setStatus("µτ", base + countStr);
   }
 
   // ═══════════════════════════════════════
   // Helper: stop the server
   // ═══════════════════════════════════════
   function stopServer() {
-    latestCtx = null;  // prevent stale ctx use from async WebSocket close events
+    latestCtx = null; // prevent stale ctx use from async WebSocket close events
     if (heartbeatTimer) {
       clearInterval(heartbeatTimer);
       heartbeatTimer = null;
@@ -292,7 +318,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       stopServer();
-      ctx.ui.setStatus("τ", "");
+      ctx.ui.setStatus("µτ", "");
       ctx.ui.notify("my-tau server stopped", "info");
     },
   });
@@ -344,12 +370,20 @@ export default function (pi: ExtensionAPI) {
   // Event forwarding — subscribe to all Pi events
   // ═══════════════════════════════════════
   const eventTypes = [
-    "agent_start", "agent_end",
-    "turn_start", "turn_end",
-    "message_start", "message_update", "message_end",
-    "tool_execution_start", "tool_execution_update", "tool_execution_end",
-    "auto_compaction_start", "auto_compaction_end",
-    "auto_retry_start", "auto_retry_end",
+    "agent_start",
+    "agent_end",
+    "turn_start",
+    "turn_end",
+    "message_start",
+    "message_update",
+    "message_end",
+    "tool_execution_start",
+    "tool_execution_update",
+    "tool_execution_end",
+    "auto_compaction_start",
+    "auto_compaction_end",
+    "auto_retry_start",
+    "auto_retry_end",
     "model_select",
   ] as const;
 
@@ -435,14 +469,17 @@ export default function (pi: ExtensionAPI) {
 
     if (!bestMessage) {
       // Fall back to first message with any content
-      bestMessage = messages.find(m => m.trim().length > 0) || "";
+      bestMessage = messages.find((m) => m.trim().length > 0) || "";
     }
 
     if (!bestMessage) return null;
 
     // Extract a clean title: first sentence or clause, max ~60 chars
     let title = bestMessage
-      .replace(/^(ok |okay |so |actually |hey |please |can you |could you |i want(ed)? to |i wanna |let'?s )/i, "")
+      .replace(
+        /^(ok |okay |so |actually |hey |please |can you |could you |i want(ed)? to |i wanna |let'?s )/i,
+        "",
+      )
       .replace(/\n.*/s, "") // first line only
       .trim();
 
@@ -524,16 +561,24 @@ export default function (pi: ExtensionAPI) {
             // Build content with optional images
             if (command.images?.length) {
               const validMimes = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-              const content: any[] = [{ type: "text", text: command.message || "(see attached image)" }];
+              const content: any[] = [
+                { type: "text", text: command.message || "(see attached image)" },
+              ];
               for (const img of command.images) {
                 if (!img.data || typeof img.data !== "string") {
-                  if (process.env.MY_TAU_DEBUG) console.error("[my-tau-server] Skipping image: missing or invalid data");
+                  if (process.env.MY_TAU_DEBUG)
+                    console.error("[my-tau-server] Skipping image: missing or invalid data");
                   continue;
                 }
                 // Strip data URL prefix if accidentally included
                 const data = img.data.includes(",") ? img.data.split(",")[1] : img.data;
-                const mimeType = (validMimes.includes(img.mimeType) ? img.mimeType : "image/png") as "image/png" | "image/jpeg" | "image/gif" | "image/webp";
-                if (process.env.MY_TAU_DEBUG) console.log(`[my-tau-server] Image: mimeType=${mimeType}, dataLen=${data.length}, rawMimeType=${img.mimeType}`);
+                const mimeType = (
+                  validMimes.includes(img.mimeType) ? img.mimeType : "image/png"
+                ) as "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+                if (process.env.MY_TAU_DEBUG)
+                  console.log(
+                    `[my-tau-server] Image: mimeType=${mimeType}, dataLen=${data.length}, rawMimeType=${img.mimeType}`,
+                  );
                 const imageBlock = {
                   type: "image" as const,
                   data: data,
@@ -541,7 +586,10 @@ export default function (pi: ExtensionAPI) {
                 };
                 // Defensive: verify mimeType is actually set (debug crash where it was missing)
                 if (!imageBlock.mimeType) {
-                  if (process.env.MY_TAU_DEBUG) console.error(`[my-tau-server] BUG: mimeType is falsy after assignment! img.mimeType=${img.mimeType}, falling back to image/png`);
+                  if (process.env.MY_TAU_DEBUG)
+                    console.error(
+                      `[my-tau-server] BUG: mimeType is falsy after assignment! img.mimeType=${img.mimeType}, falling back to image/png`,
+                    );
                   imageBlock.mimeType = "image/png";
                 }
                 content.push(imageBlock);
@@ -626,10 +674,13 @@ export default function (pi: ExtensionAPI) {
           }
           const models = await ctx.modelRegistry.getAvailable();
           const model = models.find(
-            (m: any) => m.provider === command.provider && m.id === command.modelId
+            (m: any) => m.provider === command.provider && m.id === command.modelId,
           );
           if (!model) {
-            sendTo(ws, error("set_model", `Model not found: ${command.provider}/${command.modelId}`));
+            sendTo(
+              ws,
+              error("set_model", `Model not found: ${command.provider}/${command.modelId}`),
+            );
             break;
           }
           const ok = await pi.setModel(model);
@@ -655,14 +706,17 @@ export default function (pi: ExtensionAPI) {
             break;
           }
           const idx = availModels.findIndex(
-            (m: any) => m.provider === currentModel.provider && m.id === currentModel.id
+            (m: any) => m.provider === currentModel.provider && m.id === currentModel.id,
           );
           const nextModel = availModels[(idx + 1) % availModels.length];
           await pi.setModel(nextModel);
-          sendTo(ws, success("cycle_model", {
-            model: nextModel,
-            thinkingLevel: pi.getThinkingLevel(),
-          }));
+          sendTo(
+            ws,
+            success("cycle_model", {
+              model: nextModel,
+              thinkingLevel: pi.getThinkingLevel(),
+            }),
+          );
           break;
         }
 
@@ -691,7 +745,9 @@ export default function (pi: ExtensionAPI) {
           }
           const usage = ctx.getContextUsage();
           const entries = ctx.sessionManager.getEntries();
-          let userMessages = 0, assistantMessages = 0, toolCalls = 0;
+          let userMessages = 0,
+            assistantMessages = 0,
+            toolCalls = 0;
           for (const e of entries) {
             if (e.type === "message") {
               if (e.message?.role === "user") userMessages++;
@@ -699,14 +755,17 @@ export default function (pi: ExtensionAPI) {
               else if (e.message?.role === "toolResult") toolCalls++;
             }
           }
-          sendTo(ws, success("get_session_stats", {
-            sessionFile: ctx.sessionManager.getSessionFile(),
-            userMessages,
-            assistantMessages,
-            toolCalls,
-            totalMessages: entries.length,
-            tokens: usage ? { input: usage.tokens, total: usage.tokens } : null,
-          }));
+          sendTo(
+            ws,
+            success("get_session_stats", {
+              sessionFile: ctx.sessionManager.getSessionFile(),
+              userMessages,
+              assistantMessages,
+              toolCalls,
+              totalMessages: entries.length,
+              tokens: usage ? { input: usage.tokens, total: usage.tokens } : null,
+            }),
+          );
           break;
         }
 
@@ -758,9 +817,14 @@ export default function (pi: ExtensionAPI) {
             const args = command.outputPath
               ? `"${sessionFile}" "${command.outputPath}"`
               : `"${sessionFile}"`;
-            const output = execSync(`pi --export ${args}`, { cwd: process.cwd(), timeout: 30000, encoding: "utf-8" });
+            const output = execSync(`pi --export ${args}`, {
+              cwd: process.cwd(),
+              timeout: 30000,
+              encoding: "utf-8",
+            });
             // pi prints the output path
-            const result = output.trim().split("\n").pop() || sessionFile.replace(".jsonl", ".html");
+            const result =
+              output.trim().split("\n").pop() || sessionFile.replace(".jsonl", ".html");
             sendTo(ws, success("export_html", { path: result }));
           } catch (e: any) {
             sendTo(ws, error("export_html", e.message));
@@ -788,7 +852,13 @@ export default function (pi: ExtensionAPI) {
 
         case "set_auth": {
           if (!AUTH_CONFIGURED) {
-            sendTo(ws, error("set_auth", "No credentials configured. Set my-tau.user and my-tau.pass in settings.json"));
+            sendTo(
+              ws,
+              error(
+                "set_auth",
+                "No credentials configured. Set my-tau.user and my-tau.pass in settings.json",
+              ),
+            );
             break;
           }
           authEnabled = !!command.enabled;
@@ -879,31 +949,44 @@ export default function (pi: ExtensionAPI) {
       }
       const qrPromises = [QRCode.toDataURL(mirrorUrl, { width: 256, margin: 2 })];
       if (tailscaleUrl) qrPromises.push(QRCode.toDataURL(tailscaleUrl, { width: 256, margin: 2 }));
-      Promise.all(qrPromises).then((dataUrls: string[]) => {
-        const tsSection = tailscaleUrl && dataUrls[1]
-          ? `<p style="margin-top:24px;color:rgba(255,255,255,0.3);font-size:11px">TAILSCALE</p><img src="${dataUrls[1]}" width="256" height="256" alt="Tailscale QR"><a href="${tailscaleUrl}">${tailscaleUrl}</a>`
-          : "";
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(`<!DOCTYPE html>
+      Promise.all(qrPromises)
+        .then((dataUrls: string[]) => {
+          const tsSection =
+            tailscaleUrl && dataUrls[1]
+              ? `<p style="margin-top:24px;color:rgba(255,255,255,0.3);font-size:11px">TAILSCALE</p><img src="${dataUrls[1]}" width="256" height="256" alt="Tailscale QR"><a href="${tailscaleUrl}">${tailscaleUrl}</a>`
+              : "";
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(`<!DOCTYPE html>
 <html><head><meta name="viewport" content="width=device-width"><title>my-tau — Connect</title>
 <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#131316;color:#fff;font-family:-apple-system,sans-serif}
 img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rgba(255,255,255,0.5);font-size:13px;margin-top:8px}</style>
 </head><body><p style="color:rgba(255,255,255,0.3);font-size:11px">LAN</p><img src="${dataUrls[0]}" width="256" height="256" alt="QR Code"><a href="${mirrorUrl}">${mirrorUrl}</a>${tsSection}<p style="margin-top:16px">Scan to open my-tau on your phone</p></body></html>`);
-      }).catch((e: any) => {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: e.message }));
-      });
+        })
+        .catch((e: any) => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: e.message }));
+        });
       return;
     }
 
     if (urlPath === "/api/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", mode: "mirror", mirrorUrl, tailscaleUrl: tailscaleUrl || undefined }));
+      res.end(
+        JSON.stringify({
+          status: "ok",
+          mode: "mirror",
+          mirrorUrl,
+          tailscaleUrl: tailscaleUrl || undefined,
+        }),
+      );
       return;
     }
 
     if (urlPath === "/api/instances") {
-      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      });
       res.end(JSON.stringify({ instances: getRunningInstances() }));
       return;
     }
@@ -915,7 +998,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
 
     if (urlPath === "/api/projects/launch" && req.method === "POST") {
       let body = "";
-      req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
       req.on("end", () => {
         try {
           const { path: projectPath } = JSON.parse(body);
@@ -935,7 +1020,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           }
           const { execSync } = require("node:child_process");
           const escaped = resolved.replace(/'/g, "'\\''");
-          execSync(`osascript -e 'tell app "iTerm2" to create window with default profile command "cd '"'"'${escaped}'"'"' && pi"'`);
+          execSync(
+            `osascript -e 'tell app "iTerm2" to create window with default profile command "cd '"'"'${escaped}'"'"' && pi"'`,
+          );
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true }));
         } catch (e: any) {
@@ -961,7 +1048,11 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
 
     // File browser: list directory
     if (urlPath === "/api/files" || urlPath.startsWith("/api/files?")) {
-      if (req.method !== "GET") { res.writeHead(405); res.end(); return; }
+      if (req.method !== "GET") {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
       try {
         const filesUrl = new URL(`http://localhost${req.url}`);
         const explicitPath = filesUrl.searchParams.get("path");
@@ -984,7 +1075,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     // File browser: open file natively
     if (urlPath === "/api/open" && req.method === "POST") {
       let body = "";
-      req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
       req.on("end", async () => {
         try {
           const { filePath: fp } = JSON.parse(body);
@@ -995,7 +1088,8 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           }
           const { execFile } = await import("node:child_process");
           execFile("open", [fp], (err) => {
-            if (err && process.env.MY_TAU_DEBUG) console.error("[my-tau] open failed:", err.message);
+            if (err && process.env.MY_TAU_DEBUG)
+              console.error("[my-tau] open failed:", err.message);
           });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true }));
@@ -1017,7 +1111,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     // RPC proxy — handle via WebSocket command handler
     if (urlPath === "/api/rpc" && req.method === "POST") {
       let body = "";
-      req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
       req.on("end", async () => {
         try {
           const command = JSON.parse(body);
@@ -1043,7 +1139,13 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     // Session switch — in mirror mode, this is a no-op (session is controlled by TUI)
     if (urlPath === "/api/sessions/switch" && req.method === "POST") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ success: true, mirror: true, note: "Session switching is controlled by the TUI in mirror mode" }));
+      res.end(
+        JSON.stringify({
+          success: true,
+          mirror: true,
+          note: "Session switching is controlled by the TUI in mirror mode",
+        }),
+      );
       return;
     }
 
@@ -1059,7 +1161,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     try {
       const { execSync } = require("node:child_process");
       // Get tmux pane PIDs
-      const paneOutput = execSync("tmux list-panes -a -F '#{pane_pid}' 2>/dev/null", { encoding: "utf8" });
+      const paneOutput = execSync("tmux list-panes -a -F '#{pane_pid}' 2>/dev/null", {
+        encoding: "utf8",
+      });
       const tmuxFiles = new Set<string>();
 
       for (const shellPid of paneOutput.trim().split("\n").filter(Boolean)) {
@@ -1068,13 +1172,17 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           const children = execSync(`pgrep -P ${shellPid} 2>/dev/null`, { encoding: "utf8" });
           for (const pid of children.trim().split("\n").filter(Boolean)) {
             // Check what .jsonl files this process has open
-            const lsofOut = execSync(`lsof -p ${pid} 2>/dev/null | grep '\\.jsonl'`, { encoding: "utf8" });
+            const lsofOut = execSync(`lsof -p ${pid} 2>/dev/null | grep '\\.jsonl'`, {
+              encoding: "utf8",
+            });
             for (const line of lsofOut.trim().split("\n").filter(Boolean)) {
               const match = line.match(/\/.+\.jsonl$/);
               if (match) tmuxFiles.add(match[0]);
             }
           }
-        } catch { /* no match */ }
+        } catch {
+          /* no match */
+        }
       }
       return tmuxFiles;
     } catch {
@@ -1111,10 +1219,11 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           if (!dir.isDirectory()) continue;
           const decodedPath = dir.name.replace(/^--/, "/").replace(/--$/, "").replace(/-/g, "/");
           // Check if this session dir maps to a subdirectory of the projects folder
-          if (!decodedPath.startsWith(resolved + "/") && !decodedPath.startsWith(resolved)) continue;
+          if (!decodedPath.startsWith(resolved + "/") && !decodedPath.startsWith(resolved))
+            continue;
 
           const sessionDir = path.join(SESSIONS_DIR, dir.name);
-          const files = fs.readdirSync(sessionDir).filter(f => f.endsWith(".jsonl"));
+          const files = fs.readdirSync(sessionDir).filter((f) => f.endsWith(".jsonl"));
           let lastMtime = 0;
           for (const f of files) {
             try {
@@ -1127,11 +1236,11 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       }
 
       const projects = entries
-        .filter(e => e.isDirectory() && !e.name.startsWith("."))
-        .map(e => {
+        .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+        .map((e) => {
           const fullPath = path.join(resolved, e.name);
           const info = sessionInfo.get(fullPath) || { count: 0, lastActive: 0 };
-          const isActive = instances.some(i => i.cwd === fullPath);
+          const isActive = instances.some((i) => i.cwd === fullPath);
           return {
             name: e.name,
             path: fullPath,
@@ -1166,7 +1275,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
         if (!dir.isDirectory()) continue;
 
         const projectDir = path.join(SESSIONS_DIR, dir.name);
-        const files = fs.readdirSync(projectDir).filter(f => f.endsWith(".jsonl"));
+        const files = fs.readdirSync(projectDir).filter((f) => f.endsWith(".jsonl"));
         const decodedPath = dir.name.replace(/^--/, "/").replace(/--$/, "").replace(/-/g, "/");
 
         const sessions: any[] = [];
@@ -1178,18 +1287,27 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
             if (parsed) {
               const stat = fs.statSync(filePath);
               const isTmux = tmuxFiles.has(filePath);
-              sessions.push({ ...parsed, file, filePath, mtime: stat.mtimeMs, ...(isTmux && { tmux: true }) });
+              sessions.push({
+                ...parsed,
+                file,
+                filePath,
+                mtime: stat.mtimeMs,
+                ...(isTmux && { tmux: true }),
+              });
             }
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         }
 
         sessions.sort((a, b) => b.mtime - a.mtime);
 
         if (sessions.length > 0) {
           const HOME = process.env.HOME || "";
-          const displayPath = HOME && decodedPath.startsWith(HOME + "/")
-            ? "~" + decodedPath.slice(HOME.length)
-            : decodedPath;
+          const displayPath =
+            HOME && decodedPath.startsWith(HOME + "/")
+              ? "~" + decodedPath.slice(HOME.length)
+              : decodedPath;
           projects.push({ path: decodedPath, displayPath, dirName: dir.name, sessions });
         }
       }
@@ -1230,14 +1348,22 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       buffer = lines.pop() || "";
       for (const line of lines) {
         if (line.trim()) {
-          try { entries.push(JSON.parse(line)); } catch { /* skip */ }
+          try {
+            entries.push(JSON.parse(line));
+          } catch {
+            /* skip */
+          }
         }
       }
     });
 
     stream.on("end", () => {
       if (buffer.trim()) {
-        try { entries.push(JSON.parse(buffer)); } catch { /* skip */ }
+        try {
+          entries.push(JSON.parse(buffer));
+        } catch {
+          /* skip */
+        }
       }
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ entries }));
@@ -1281,7 +1407,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
             }
           }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
 
       if (lineCount > 50 && firstMessage) break;
     }
@@ -1306,10 +1434,25 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
   // ═══════════════════════════════════════
 
   const IGNORED_NAMES = new Set([
-    "node_modules", ".git", "__pycache__", ".DS_Store", ".Trash",
-    ".next", ".nuxt", "dist", "build", ".cache", ".turbo",
-    "venv", ".venv", "env", ".env.local",
-    ".pi", "coverage", ".nyc_output", ".parcel-cache",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".DS_Store",
+    ".Trash",
+    ".next",
+    ".nuxt",
+    "dist",
+    "build",
+    ".cache",
+    ".turbo",
+    "venv",
+    ".venv",
+    "env",
+    ".env.local",
+    ".pi",
+    "coverage",
+    ".nyc_output",
+    ".parcel-cache",
   ]);
 
   function serveFileList(res: http.ServerResponse, dirPath: string) {
@@ -1338,7 +1481,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
             size: entry.isDirectory() ? null : stat.size,
             mtime: stat.mtimeMs,
           });
-        } catch { /* skip inaccessible */ }
+        } catch {
+          /* skip inaccessible */
+        }
       }
 
       // Directories first, then files, both alphabetical
@@ -1386,7 +1531,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
 
         const projectDir = path.join(SESSIONS_DIR, dir.name);
         const decodedPath = dir.name.replace(/^--/, "/").replace(/--$/, "").replace(/-/g, "/");
-        const files = fs.readdirSync(projectDir).filter(f => f.endsWith(".jsonl"));
+        const files = fs.readdirSync(projectDir).filter((f) => f.endsWith(".jsonl"));
 
         for (const file of files) {
           if (results.length >= MAX_RESULTS) break;
@@ -1419,7 +1564,10 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
                   let text = "";
                   if (typeof content === "string") text = content;
                   else if (Array.isArray(content)) {
-                    text = content.filter((b: any) => b.type === "text").map((b: any) => b.text).join(" ");
+                    text = content
+                      .filter((b: any) => b.type === "text")
+                      .map((b: any) => b.text)
+                      .join(" ");
                   }
 
                   if (!firstMessage && entry.message?.role === "user" && text) {
@@ -1431,7 +1579,10 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
                     const idx = text.toLowerCase().indexOf(q);
                     const start = Math.max(0, idx - 60);
                     const end = Math.min(text.length, idx + q.length + 60);
-                    const snippet = (start > 0 ? "…" : "") + text.substring(start, end) + (end < text.length ? "…" : "");
+                    const snippet =
+                      (start > 0 ? "…" : "") +
+                      text.substring(start, end) +
+                      (end < text.length ? "…" : "");
 
                     matches.push({
                       role: entry.message?.role || "unknown",
@@ -1441,7 +1592,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
                     if (matches.length >= 3) break; // max 3 matches per session
                   }
                 }
-              } catch { /* skip line */ }
+              } catch {
+                /* skip line */
+              }
             }
 
             rl.close();
@@ -1458,7 +1611,9 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
                 matches,
               });
             }
-          } catch { /* skip file */ }
+          } catch {
+            /* skip file */
+          }
         }
       }
 
@@ -1484,7 +1639,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
 
     server.on("upgrade", (request, socket, head) => {
       if (authEnabled && !checkBasicAuth(request)) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"my-tau\"\r\n\r\n");
+        socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="my-tau"\r\n\r\n');
         socket.destroy();
         return;
       }
@@ -1521,7 +1676,8 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           const command = JSON.parse(data.toString());
           handleCommand(ws, command);
         } catch (e) {
-          if (process.env.MY_TAU_DEBUG) console.error("[my-tau] Failed to parse client message:", e);
+          if (process.env.MY_TAU_DEBUG)
+            console.error("[my-tau] Failed to parse client message:", e);
         }
       });
 
@@ -1546,13 +1702,17 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
         }
 
         if (!(client as any).isAlive) {
-          try { client.terminate(); } catch {}
+          try {
+            client.terminate();
+          } catch {}
           clients.delete(client);
           continue;
         }
 
         (client as any).isAlive = false;
-        try { client.ping(); } catch {}
+        try {
+          client.ping();
+        } catch {}
       }
     }, 20000);
 
@@ -1562,7 +1722,8 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       });
       server!.once("error", (err: any) => {
         if (err.code === "EADDRINUSE" && port < PORT + maxAttempts) {
-          if (process.env.MY_TAU_DEBUG) console.log(`[my-tau] Port ${port} in use, trying ${port + 1}...`);
+          if (process.env.MY_TAU_DEBUG)
+            console.log(`[my-tau] Port ${port} in use, trying ${port + 1}...`);
           server!.removeAllListeners("error");
           tryListen(port + 1, maxAttempts);
         } else {
@@ -1589,9 +1750,14 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       // Fallback: any LAN IP that isn't a bridge or VPN
       if (localIp === "localhost") {
         for (const name of Object.keys(nets)) {
-          if (name.startsWith("bridge") || name.startsWith("utun") || name.startsWith("lo")) continue;
+          if (name.startsWith("bridge") || name.startsWith("utun") || name.startsWith("lo"))
+            continue;
           for (const net of nets[name] || []) {
-            if (net.family === "IPv4" && !net.internal && (net.address.startsWith("192.168.") || net.address.startsWith("10."))) {
+            if (
+              net.family === "IPv4" &&
+              !net.internal &&
+              (net.address.startsWith("192.168.") || net.address.startsWith("10."))
+            ) {
               localIp = net.address;
               break;
             }
@@ -1624,7 +1790,10 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
       const sessionFile = ctx.sessionManager.getSessionFile() || "";
       registerInstance(port, sessionFile, ctx.cwd || process.cwd());
 
-      ctx.ui.notify(`my-tau: ${mirrorUrl}${tailscaleUrl ? `  •  Tailscale: ${tailscaleUrl}` : ""}  •  /qr for QR code`, "info");
+      ctx.ui.notify(
+        `my-tau: ${mirrorUrl}${tailscaleUrl ? `  •  Tailscale: ${tailscaleUrl}` : ""}  •  /qr for QR code`,
+        "info",
+      );
     };
 
     tryListen(PORT);
@@ -1637,7 +1806,10 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     latestCtx = ctx;
 
     if (!TAU_AUTO_START) {
-      ctx.ui.notify("my-tau auto-start disabled (MY_TAU_DISABLED=1). Use /my-tau-start to start manually.", "info");
+      ctx.ui.notify(
+        "my-tau auto-start disabled (MY_TAU_DISABLED=1). Use /my-tau-start to start manually.",
+        "info",
+      );
       return;
     }
 
@@ -1648,7 +1820,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
   // Cleanup on shutdown
   // ═══════════════════════════════════════
   pi.on("session_shutdown", async () => {
-    latestCtx = null;  // clear before stop so async close events skip updateMirrorStatus
+    latestCtx = null; // clear before stop so async close events skip updateMirrorStatus
     stopServer();
   });
 }
