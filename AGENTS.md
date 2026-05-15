@@ -81,6 +81,16 @@ Response shape:
 - Mobile `.project-header` rule only overrides `font-size`, `font-weight`, `padding`, `margin-top` — does **not** duplicate `text-transform` or `letter-spacing`
 - Theme variables (e.g., `--accent-text`, `--text-dim`, `--bg-glass-hover`) drive colors
 
+## Server Architecture
+
+**Two-Tier Design** — my-tau uses two servers:
+- **Control server** (fixed port 3001): serves static files (`/`), `/api/instances`, `/api/sessions`, `/api/health`, etc. Only one instance runs at a time per machine; standby sessions take over if the control server shuts down.
+- **Communication server** (random OS-assigned port via `port: 0`): every pi session runs one. Serves `/comm/ws` (WebSocket) and `/comm/api/rpc` (HTTP RPC) for that specific session.
+
+**Endpoint Routing** — Control server handles everything except `/comm/*`. The communication server only handles `/comm/ws` and `/comm/api/rpc`. Static files and session metadata APIs live on the control server; real-time events and commands live on the per-session comm server.
+
+**Frontend Connection** — On load, the browser fetches `/api/instances` from the control server to discover each session's `commPort`. The WebSocket connects to `ws://host:commPort/comm/ws`. RPC calls derive their URL from `wsClient.url` (both WS and RPC are on the same comm server): `http://host:commPort/comm/api/rpc`.
+
 ## Sidebar Internals
 
 - `SessionSidebar` class manages: project grouping, collapse/expand (via `collapsedProjects` Set), favorites (`localStorage` key `tau-favourites`), full-text search (300ms debounce), context menu
