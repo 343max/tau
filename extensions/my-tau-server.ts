@@ -1258,6 +1258,40 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
     }
   }
 
+  // ═══════════════════════════════════════
+  // Inject current session from instance registry
+  // ═══════════════════════════════════════
+  function encodeDirName(cwd: string): string {
+    return "--" + cwd.replace(/^\//, "").replace(/\/$/, "").replace(/\//g, "-") + "--";
+  }
+
+  function getCurrentSession() {
+    const regFile = path.join(INSTANCES_DIR, `${process.pid}.json`);
+    if (!fs.existsSync(regFile)) return null;
+    try {
+      const info = JSON.parse(fs.readFileSync(regFile, "utf8"));
+      if (!info.sessionFile || !info.cwd) return null;
+      const fileName = path.basename(info.sessionFile);
+      // Extract id and timestamp from filename: "2026-05-15T14-21-01-615Z_uuid.jsonl"
+      const base = fileName.replace(".jsonl", "");
+      const uscoreIdx = base.indexOf("_");
+      const timestamp = uscoreIdx >= 0 ? base.substring(0, uscoreIdx) : "";
+      const id = uscoreIdx >= 0 ? base.substring(uscoreIdx + 1) : base;
+      return {
+        id,
+        timestamp,
+        name: null,
+        firstMessage: null,
+        file: fileName,
+        filePath: info.sessionFile,
+        mtime: new Date(info.startedAt || Date.now()).getTime(),
+        cwd: info.cwd,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async function serveSessionsList(res: http.ServerResponse) {
     try {
       if (!fs.existsSync(SESSIONS_DIR)) {
@@ -1309,6 +1343,34 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
               ? "~" + decodedPath.slice(HOME.length)
               : decodedPath;
           projects.push({ path: decodedPath, displayPath, dirName: dir.name, sessions });
+        }
+      }
+
+      // Inject current session from instance registry if not yet on disk
+      const currentSession = getCurrentSession();
+      if (currentSession && currentSession.id) {
+        const alreadyPresent = projects.some((p) =>
+          p.sessions.some((s: any) => s.filePath === currentSession.filePath),
+        );
+        if (!alreadyPresent) {
+          const dirName = encodeDirName(currentSession.cwd!);
+          let project = projects.find((p) => p.dirName === dirName);
+          if (!project) {
+            const HOME = process.env.HOME || "";
+            const displayPath =
+              HOME && currentSession.cwd!.startsWith(HOME + "/")
+                ? "~" + currentSession.cwd!.slice(HOME.length)
+                : currentSession.cwd!;
+            project = {
+              path: currentSession.cwd,
+              displayPath,
+              dirName,
+              sessions: [],
+            };
+            projects.push(project);
+          }
+          project.sessions.push(currentSession);
+          project.sessions.sort((a: any, b: any) => b.mtime - a.mtime);
         }
       }
 
