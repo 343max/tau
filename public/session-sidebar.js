@@ -332,8 +332,8 @@ export class SessionSidebar {
         ${favIcon}
         <div class="session-title" title="${this.escapeHtml(title)}">${this.escapeHtml(title)}</div>
         ${tmuxTag}
+        <span class="session-meta">${time}</span>
       </div>
-      <div class="session-meta">${time}</div>
     `;
 
     item.addEventListener('click', () => this.onSessionSelect(session, project));

@@ -619,6 +619,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  margin-left: 12px;
 }
 
 .project-sessions.collapsed { display: none; }
@@ -627,7 +628,7 @@ body {
 .session-item {
   display: flex;
   flex-direction: column;
-  padding: 8px 12px;
+  padding: 6px 12px;
   cursor: pointer;
   border-radius: var(--radius);
   transition: all var(--duration) var(--ease);
@@ -710,6 +711,10 @@ body {
 /* Favourites header */
 .favourites-header {
   color: var(--accent);
+}
+
+.favourites-group .project-sessions {
+  margin-left: 0;
 }
 
 .fav-star {
@@ -823,7 +828,8 @@ body {
 .session-meta {
   font-size: 10px;
   color: var(--text-dim);
-  margin-top: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* Mobile overlay */
@@ -3217,7 +3223,6 @@ body.hide-thinking .thinking-block { display: none !important; }
   .session-meta {
     font-size: 13px;
     font-weight: 400;
-    margin-top: 4px;
     color: var(--text-dim);
   }
 
