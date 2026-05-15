@@ -70,3 +70,5 @@ Response shape:
 - `SessionSidebar` class manages: project grouping, collapse/expand (via `collapsedProjects` Set), favorites (`localStorage` key `tau-favourites`), full-text search (300ms debounce), context menu
 - Project headers use class `project-header`; sessions use `session-item`
 - Active session tracked by `activeSessionFile` (the `filePath` of the session)
+- **`.project-sessions` is shared by favourites** — the favourites group reuses `.project-sessions` as its container. CSS changes to `.project-sessions` cascade to both regular projects and favorites. Override with `.favourites-group .project-sessions` when styles should differ.
+- **Session item HTML is duplicated in two methods** — `buildSessionItem()` (regular sessions) and `renderSearchResults()` (search hits) each construct session item HTML inline. When changing session item layout, update both unless divergence is intentional.
