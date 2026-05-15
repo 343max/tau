@@ -104,7 +104,7 @@ export class SessionSidebar {
 
     const header = document.createElement('div');
     header.className = 'project-header search-results-header';
-    header.innerHTML = `<span>🔍</span> <span>Message matches</span> <span class="project-count">${this._searchResults.length}</span>`;
+    header.innerHTML = `<span>🔍</span> <span>Message matches</span>`;
     group.appendChild(header);
 
     const sessionsDiv = document.createElement('div');
@@ -366,7 +366,7 @@ export class SessionSidebar {
 
       const header = document.createElement('div');
       header.className = 'project-header favourites-header';
-      header.innerHTML = `<span class="fav-star">★</span> <span>Favourites</span> <span class="project-count">${favSessions.length}</span>`;
+      header.innerHTML = `<span class="fav-star">★</span> <span>Favourites</span>`;
       favGroup.appendChild(header);
 
       const sessionsDiv = document.createElement('div');
@@ -397,7 +397,6 @@ export class SessionSidebar {
           <span class="project-name" title="${this.escapeHtml(project.path)}">${this.escapeHtml(dirName)}</span>
           <span class="project-path">${this.escapeHtml(displayPath)}</span>
         </div>
-        <span class="project-count">${project.sessions.length}</span>
       `;
 
       header.addEventListener('click', () => {

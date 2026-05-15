@@ -608,12 +608,6 @@ body {
 
 .project-header.collapsed .chevron { transform: rotate(-90deg); }
 
-.project-count {
-  margin-left: auto;
-  font-weight: 600;
-  font-size: 10px;
-  color: var(--text-dim);
-}
 
 .project-sessions {
   display: flex;
@@ -3239,10 +3233,6 @@ body.hide-thinking .thinking-block { display: none !important; }
     margin-top: 16px;
   }
 
-  .project-count {
-    font-size: 11px;
-    font-weight: 400;
-  }
 
   .search-snippet {
     font-size: 14px;
