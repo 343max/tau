@@ -88,6 +88,14 @@ function findPublicDir(): string {
 const SESSIONS_DIR = path.join(process.env.HOME || "~", ".pi/agent/sessions");
 const INSTANCES_DIR = path.join(process.env.HOME || "~", ".pi/my-tau-instances");
 
+// Detect if running inside cmux or wezterm (enables session continuation)
+function detectTerminal(): "cmux" | "wezterm" | null {
+  if (process.env.CMUX_SOCKET_PATH) return "cmux";
+  if (process.env.WEZTERM_UNIX_SOCKET) return "wezterm";
+  return null;
+}
+const TERMINAL_TYPE = detectTerminal();
+
 // Instance registry — tracks all running my-tau servers and standbys
 function registerInstance(port: number, commPort: number, sessionFile: string, cwd: string, role: "server" | "standby" = "server") {
   fs.mkdirSync(INSTANCES_DIR, { recursive: true });
@@ -800,6 +808,7 @@ export default function (pi: ExtensionAPI) {
       sessionFile,
       isStreaming: !ctx.isIdle(),
       contextUsage,
+      terminalType: TERMINAL_TYPE,
     };
   }
 
@@ -892,6 +901,48 @@ export default function (pi: ExtensionAPI) {
         case "follow_up": {
           pi.sendUserMessage(command.message, { deliverAs: "followUp" });
           sendTo(ws, success("follow_up"));
+          break;
+        }
+
+        // ─── Session continuation (spawn new pi in terminal) ───
+        case "continue_session": {
+          if (!TERMINAL_TYPE) {
+            sendTo(ws, error("continue_session", "Not running in cmux or wezterm"));
+            break;
+          }
+
+          const sessionId = command.sessionId;
+          const cwd = command.cwd;
+          const message = command.message;
+
+          if (!sessionId || !cwd || !message) {
+            sendTo(ws, error("continue_session", "sessionId, cwd, and message required"));
+            break;
+          }
+
+          try {
+            if (TERMINAL_TYPE === "cmux") {
+              // Shell-escape the message for cmux's --command flag
+              const escaped = "'" + message.replace(/'/g, "'\\''") + "'";
+              const { exec } = require("node:child_process");
+              exec(
+                `cmux new-workspace --cwd "${cwd}" --focus true --command "pi --session ${sessionId} ${escaped}"`,
+                { detached: true, stdio: "ignore" },
+              ).unref();
+            } else {
+              // wezterm: spawn directly, no shell involved
+              const { spawn } = require("node:child_process");
+              const proc = spawn(
+                "wezterm",
+                ["cli", "spawn", "--cwd", cwd, "--", "pi", "--session", sessionId, message],
+                { detached: true, stdio: "ignore" },
+              );
+              proc.unref();
+            }
+            sendTo(ws, success("continue_session"));
+          } catch (e: any) {
+            sendTo(ws, error("continue_session", e.message));
+          }
           break;
         }
 
@@ -1258,6 +1309,7 @@ img{border-radius:12px}a{color:#b87a5c;font-size:18px;margin-top:16px}p{color:rg
           mode: "mirror",
           mirrorUrl,
           tailscaleUrl: tailscaleUrl || undefined,
+          terminalType: TERMINAL_TYPE,
         }),
       );
       return;

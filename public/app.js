@@ -72,6 +72,10 @@ let viewingActiveSession = true; // Whether we're viewing the live session or a 
 let isMirrorMode = false; // Set when mirror_sync received
 let liveInstances = []; // All running Tau instances [{port, sessionFile, cwd}]
 
+// Session continuation state (spawn new pi in terminal)
+let terminalType = null; // "cmux" | "wezterm" | null — set from mirror_sync / health
+let pendingContinueSession = null; // { sessionId, session, project } — user selected a session to continue
+
 // File browser
 const fileSidebar = document.getElementById('file-sidebar');
 const fileSidebarToggle = document.getElementById('file-sidebar-toggle');
@@ -601,6 +605,35 @@ function sendMessage() {
   messageInput.value = '';
   messageInput.style.height = 'auto';
 
+  // If we're continuing a session, send a continue_session command instead of prompt
+  if (pendingContinueSession) {
+    const info = pendingContinueSession;
+    pendingContinueSession = null;
+    updateContinueModeUI();
+
+    // Render the user's message in the chat
+    messageRenderer.renderUserMessage({ content: message });
+
+    // Clear any pending images (not supported for session continuation)
+    if (pendingImages.length > 0) {
+      pendingImages = [];
+      renderImagePreviews();
+    }
+
+    wsClient.send({
+      type: 'continue_session',
+      sessionId: info.sessionId,
+      cwd: info.project.path,
+      message: message,
+    });
+
+    // Return to viewing the live session
+    viewingActiveSession = true;
+    updateMirrorInputState();
+    wsClient.send({ type: 'mirror_sync_request' });
+    return;
+  }
+
   const cmd = {
     type: 'prompt',
     message,
@@ -1044,6 +1077,8 @@ sessionSearchInput.addEventListener('input', () => {
 });
 
 async function newSession() {
+  pendingContinueSession = null;
+  updateContinueModeUI();
   sessionTotalCost = 0;
   lastInputTokens = 0;
   updateCostDisplay();
@@ -1058,6 +1093,31 @@ async function newSession() {
 }
 
 async function handleSessionSelect(session, project) {
+  // If terminal spawning is available, sessions become continuable
+  const isCurrentlyActive = isMirrorMode && session.filePath === mirrorActiveSessionFile;
+
+  if (terminalType && !isCurrentlyActive) {
+    // Enter continue mode — load history for preview, enable input for continue message
+    pendingContinueSession = { sessionId: session.id, session, project };
+    viewingActiveSession = false;
+    updateContinueModeUI();
+
+    sessionTotalCost = 0;
+    lastInputTokens = 0;
+    updateCostDisplay();
+    updateTokenUsage();
+    await switchSession(session.filePath, session, project);
+
+    if (isMobile()) {
+      sidebarEl.classList.add('collapsed');
+      sidebarOverlay.classList.remove('visible');
+    }
+    return;
+  }
+
+  // Normal selection behavior
+  pendingContinueSession = null;
+  updateContinueModeUI();
   sidebar.setActive(session.filePath);
   sessionTotalCost = 0;
   lastInputTokens = 0;
@@ -1155,6 +1215,11 @@ function handleMirrorSync(data) {
   console.log('[my-tau] Received state snapshot:', data.entries?.length, 'entries');
   isMirrorMode = true;
 
+  // Track terminal type for session continuation
+  if (data.terminalType) {
+    terminalType = data.terminalType;
+  }
+
   // Track the active session
   mirrorActiveSessionFile = data.sessionFile || null;
   viewingActiveSession = true;
@@ -1224,15 +1289,30 @@ function updateMirrorInputState() {
   if (!isMirrorMode) return;
 
   const inputArea = document.querySelector('.input-area');
-  if (viewingActiveSession) {
+
+  if (pendingContinueSession) {
+    // Continue mode — user selected a session, terminal spawning available
+    messageInput.disabled = false;
+    messageInput.placeholder = terminalType === 'cmux'
+      ? 'Send message to continue session in new cmux workspace'
+      : 'Send message to continue session in new wezterm tab';
+    inputArea?.classList.add('mirror-continue-mode');
+    inputArea?.classList.remove('mirror-readonly');
+  } else if (viewingActiveSession) {
     messageInput.disabled = false;
     messageInput.placeholder = 'Message...';
-    inputArea?.classList.remove('mirror-readonly');
+    inputArea?.classList.remove('mirror-readonly', 'mirror-continue-mode');
   } else {
     messageInput.disabled = true;
     messageInput.placeholder = 'Viewing historical session (read-only)';
     inputArea?.classList.add('mirror-readonly');
+    inputArea?.classList.remove('mirror-continue-mode');
   }
+}
+
+// Update UI elements when entering/leaving continue mode
+function updateContinueModeUI() {
+  updateMirrorInputState();
 }
 
 // ═══════════════════════════════════════
@@ -1425,6 +1505,9 @@ function updateConnectionStatus(status) {
           tailscaleUrl = data.tailscaleUrl;
           statusText.textContent = 'Connected • TS';
           statusText.title = tailscaleUrl;
+        }
+        if (data.terminalType) {
+          terminalType = data.terminalType;
         }
       }).catch(() => {});
     }
